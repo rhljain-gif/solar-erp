@@ -97,6 +97,89 @@ export default function DashboardPage() {
   const [targetForm,setTargetForm] = useState({fy_label:'',fy_start:'',fy_end:'',target_units:'',target_value:'',target_profit:'',mfr_slab_1_units:'',mfr_slab_1_bonus:'',mfr_slab_2_units:'',mfr_slab_2_bonus:'',notes:''});
   const [bizExpForm,setBizExpForm] = useState({expense_date:'',category:'Rent',description:'',vendor_name:'',invoice_ref:'',amount:'',gst_rate:'0',is_gst_claimable:true,payment_mode:'Bank Transfer',notes:''});
 
+  const [editPO,setEditPO]       = useState(null);
+  const [editForm,setEditForm]   = useState({});
+  const [confirmDelete,setConfirmDelete] = useState(null); // {type, id, label, onConfirm}
+
+  const askDelete = (type, id, label, onConfirm) => setConfirmDelete({type,id,label,onConfirm});
+
+  const deletePO = async (id) => {
+    const linked = cns.filter(c=>c.po_id===id);
+    if (linked.length>0) { showToast(`⛔ Cannot delete — ${linked.length} CN/FOC linked to this PO. Remove them first.`); return; }
+    setSaving(true);
+    await supabase.from('purchase_orders').delete().eq('id',id);
+    showToast('PO deleted'); await fetchAll(); setSaving(false);
+  };
+
+  const deleteCN = async (id) => {
+    setSaving(true);
+    await supabase.from('credit_notes').delete().eq('id',id);
+    showToast('CN/FOC deleted'); await fetchAll(); setSaving(false);
+  };
+
+  const deleteBizExp = async (id) => {
+    setSaving(true);
+    await supabase.from('business_expenses').delete().eq('id',id);
+    showToast('Expense deleted'); await fetchAll(); setSaving(false);
+  };
+
+  const deletePipeline = async (id) => {
+    setSaving(true);
+    await supabase.from('pipeline_orders').delete().eq('id',id);
+    showToast('Pipeline entry deleted'); await fetchAll(); setSaving(false);
+  };
+
+  const deleteCashTxn = async (id) => {
+    setSaving(true);
+    await supabase.from('cash_transactions').delete().eq('id',id);
+    showToast('Transaction deleted'); await fetchAll(); setSaving(false);
+  };
+
+  const deleteMfrCN = async (id) => {
+    const linked = mfrExp.filter(e=>e.mfr_cn_id===id);
+    if (linked.length>0) { showToast(`⛔ Cannot delete — ${linked.length} expense(s) booked against this CN. Remove expenses first.`); return; }
+    setSaving(true);
+    await supabase.from('manufacturer_cns').delete().eq('id',id);
+    showToast('Manufacturer CN deleted'); await fetchAll(); setSaving(false);
+  };
+
+  const deleteMfrExp = async (id) => {
+    setSaving(true);
+    await supabase.from('manufacturer_cn_expenses').delete().eq('id',id);
+    showToast('Expense deleted'); await fetchAll(); setSaving(false);
+  };
+
+  const openEditPO = p => {
+    setEditForm({
+      po_id:p.id, customer_id:String(p.customer_id), delivery_type:p.delivery_type,
+      qty:String(p.qty), unit_price:String(p.unit_price), purchase_price:String(p.purchase_price),
+      vendor_name:p.vendor_name||'', vendor_invoice_no:p.vendor_invoice_no||'',
+      purchase_date:p.purchase_date||'', advance:String(p.advance),
+      po_date:p.po_date||'', status:p.status,
+      invoice_no:p.invoice_no||'', invoice_date:p.invoice_date||'', dispatch_date:p.dispatch_date||'',
+    });
+    setEditPO(p);
+  };
+
+  const saveEditPO = async () => {
+    if (!editForm.qty||!editForm.unit_price||!editForm.purchase_price||!editForm.advance||!editForm.po_date) { showToast('Fill all required fields'); return; }
+    setSaving(true);
+    const {error}=await supabase.from('purchase_orders').update({
+      customer_id:Number(editForm.customer_id), delivery_type:editForm.delivery_type,
+      qty:Number(editForm.qty), unit_price:Number(editForm.unit_price),
+      purchase_price:Number(editForm.purchase_price),
+      vendor_name:editForm.vendor_name||'Primary Manufacturer',
+      vendor_invoice_no:editForm.vendor_invoice_no||null,
+      purchase_date:editForm.purchase_date||null,
+      advance:Number(editForm.advance), po_date:editForm.po_date, status:editForm.status,
+      invoice_no:editForm.invoice_no||null, invoice_date:editForm.invoice_date||null,
+      dispatch_date:editForm.dispatch_date||null,
+    }).eq('id',editPO.id);
+    if (error) showToast('Error: '+error.message);
+    else { showToast('PO updated ✓'); setEditPO(null); await fetchAll(); }
+    setSaving(false);
+  };
+
   const showToast = msg => { setToast(msg); setTimeout(()=>setToast(''),3500); };
 
   const fetchAll = useCallback(async () => {
@@ -469,6 +552,25 @@ export default function DashboardPage() {
 
       {toast&&<div style={{position:'fixed',top:20,right:20,background:'#052e16',border:'1px solid #14532d',color:'#34d399',padding:'11px 18px',borderRadius:10,fontFamily:"'DM Mono',monospace",fontSize:12,zIndex:9999,boxShadow:'0 8px 24px rgba(0,0,0,.5)'}}>{toast}</div>}
 
+      {/* ── Confirm Delete Modal ── */}
+      {confirmDelete&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+          <div style={{background:'#0f172a',border:'1px solid #7f1d1d',borderRadius:16,padding:28,maxWidth:420,width:'100%',boxShadow:'0 24px 64px rgba(0,0,0,0.7)'}}>
+            <div style={{fontSize:22,marginBottom:12,textAlign:'center'}}>🗑️</div>
+            <div style={{fontFamily:"'DM Mono',monospace",color:'#f87171',fontSize:13,textAlign:'center',marginBottom:8}}>CONFIRM DELETE</div>
+            <div style={{color:'#94a3b8',fontSize:13,textAlign:'center',marginBottom:20,lineHeight:1.6}}>
+              Are you sure you want to permanently delete<br/>
+              <strong style={{color:'#f1f5f9'}}>{confirmDelete.label}</strong>?<br/>
+              <span style={{fontSize:11,color:'#64748b'}}>This cannot be undone.</span>
+            </div>
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={()=>setConfirmDelete(null)} style={{flex:1,background:'transparent',border:'1px solid #334155',color:'#94a3b8',borderRadius:8,padding:'10px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12}}>Cancel</button>
+              <button onClick={()=>{ confirmDelete.onConfirm(); setConfirmDelete(null); }} style={{flex:1,background:'#7f1d1d',border:'1px solid #f87171',color:'#fca5a5',borderRadius:8,padding:'10px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12,fontWeight:700}}>DELETE</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Header ── */}
       <div style={{background:'linear-gradient(90deg,#0f172a,#1e293b)',borderBottom:'1px solid #1e293b',padding:'0 14px'}}>
         <div style={{display:'flex',alignItems:'center',gap:10,height:50,flexWrap:'nowrap',overflowX:'auto'}}>
@@ -604,9 +706,9 @@ export default function DashboardPage() {
           </div>
           <div style={{...card,overflow:'auto'}}>
             <table>
-              <thead><tr>{['Date','Category','Description','Vendor','Base Amount','GST Rate','GST','Total','GST Claimable','Payment','Invoice Ref'].map(h=><th key={h}>{h}</th>)}</tr></thead>
+              <thead><tr>{['Date','Category','Description','Vendor','Base Amount','GST Rate','GST','Total','GST Claimable','Payment','Invoice Ref',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
               <tbody>{bizExpAnalytics.filtered.length===0
-                ?<tr><td colSpan={11} style={{textAlign:'center',color:'#475569',padding:24}}>No expenses recorded yet.</td></tr>
+                ?<tr><td colSpan={12} style={{textAlign:'center',color:'#475569',padding:24}}>No expenses recorded yet.</td></tr>
                 :bizExpAnalytics.filtered.map(e=>(
                 <tr key={e.id}>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b'}}>{e.expense_date}</td>
@@ -620,6 +722,7 @@ export default function DashboardPage() {
                   <td style={{textAlign:'center'}}>{e.is_gst_claimable?<span style={{color:'#34d399',fontSize:12}}>✓</span>:<span style={{color:'#475569',fontSize:12}}>—</span>}</td>
                   <td style={{color:'#94a3b8',fontSize:11}}>{e.payment_mode}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b',fontSize:11}}>{e.invoice_ref||'—'}</td>
+                  <td><button onClick={()=>askDelete('bizexp',e.id,`${e.category} — ${e.description}`,()=>deleteBizExp(e.id))} style={{background:'#1e293b',border:'1px solid #334155',color:'#f87171',borderRadius:6,padding:'4px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
                 </tr>
               ))}</tbody>
             </table>
@@ -679,6 +782,25 @@ export default function DashboardPage() {
                 <div style={{display:'flex',alignItems:'flex-end'}}><button onClick={addCashTxn} disabled={saving} style={{...btn(saving),width:'100%',padding:'11px 0'}}>{saving?'Saving…':'ADD →'}</button></div>
               </div>
             </div>
+            {cashTxns.length>0&&(
+              <div style={{...card,overflow:'auto',marginTop:18}}>
+                <div style={{padding:'12px 16px 0',fontSize:10,color:'#64748b',fontFamily:"'DM Mono',monospace"}}>ADDITIONAL CASH TRANSACTIONS LOG</div>
+                <table>
+                  <thead><tr>{['Date','Type','Category','Amount','Linked PO','Description',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
+                  <tbody>{cashTxns.map(t=>(
+                    <tr key={t.id}>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b'}}>{t.txn_date}</td>
+                      <td><span style={{fontSize:10,fontFamily:"'DM Mono',monospace",color:t.txn_type==='Cash In'?'#34d399':'#f87171',background:t.txn_type==='Cash In'?'#052e16':'#450a0a',borderRadius:4,padding:'2px 6px'}}>{t.txn_type}</span></td>
+                      <td style={{color:'#94a3b8',fontSize:11}}>{t.category}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:t.txn_type==='Cash In'?'#34d399':'#f87171',fontWeight:600}}>{fmtL(t.amount)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b',fontSize:11}}>{t.reference_po||'—'}</td>
+                      <td style={{color:'#94a3b8',fontSize:11}}>{t.description}</td>
+                      <td><button onClick={()=>askDelete('cash',t.id,`${t.txn_type} — ${fmtL(t.amount)} on ${t.txn_date}`,()=>deleteCashTxn(t.id))} style={{background:'#1e293b',border:'1px solid #334155',color:'#f87171',borderRadius:6,padding:'4px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
           </>):<div style={{color:'#475569',fontSize:13}}>Configure a financial year in Settings first.</div>}
         </div>)}
 
@@ -826,7 +948,7 @@ export default function DashboardPage() {
           </div>
           <div style={{...card,overflow:'auto'}}>
             <table>
-              <thead><tr>{['Customer','Qty','Expected Value','Probability','Weighted','Expected Date','Type','Status','Notes','Update'].map(h=><th key={h}>{h}</th>)}</tr></thead>
+              <thead><tr>{['Customer','Qty','Expected Value','Probability','Weighted','Expected Date','Type','Status','Notes','Update',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
               <tbody>{pipeline.map(p=>{ const cust=customers.find(c=>c.id===p.customer_id),val=p.expected_value||p.expected_qty*(p.delivery_type==='DDP'?settings.default_purchase_price_ddp:settings.default_purchase_price_exw); const sc={Active:'#38bdf8',Won:'#34d399',Lost:'#f87171',Deferred:'#f59e0b'};
                 return (<tr key={p.id}>
                   <td style={{fontWeight:500}}>{cust?.name||'—'}</td>
@@ -839,6 +961,7 @@ export default function DashboardPage() {
                   <td><span style={{fontSize:10,color:sc[p.status],fontFamily:"'DM Mono',monospace"}}>{p.status}</span></td>
                   <td style={{color:'#94a3b8',fontSize:11,maxWidth:140}}>{p.notes}</td>
                   <td><select style={{...inp,width:'auto',fontSize:10,padding:'3px 6px'}} value={p.status} onChange={e=>updatePipelineStatus(p.id,e.target.value)}>{['Active','Won','Lost','Deferred'].map(s=><option key={s}>{s}</option>)}</select></td>
+                  <td><button onClick={()=>askDelete('pipe',p.id,`Pipeline — ${cust?.name||''} ${p.expected_qty} units`,()=>deletePipeline(p.id))} style={{background:'#1e293b',border:'1px solid #334155',color:'#f87171',borderRadius:6,padding:'4px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
                 </tr>);
               })}</tbody>
             </table>
@@ -909,26 +1032,139 @@ export default function DashboardPage() {
           </div>
           <div style={{...card,overflow:'auto'}}>
             <table>
-              <thead><tr>{['PO No','Customer','Type','Buy Price','Qty','Sell Price','Value','Advance','Balance','Date','Stage','Update'].map(h=><th key={h}>{h}</th>)}</tr></thead>
+              <thead><tr>{['PO No','Customer','Type','Buy Price','Qty','Sell Price','Advance','Balance','Date','Stage','Edit','Status'].map(h=><th key={h}>{h}</th>)}</tr></thead>
               <tbody>{pos.map(p=>{ const cust=customers.find(c=>c.id===p.customer_id),gross=p.qty*p.unit_price,bal=Math.max(0,gross-p.advance); return (
                 <tr key={p.id}>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#f59e0b'}}>{p.id}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#f59e0b',whiteSpace:'nowrap'}}>{p.id}</td>
                   <td style={{fontWeight:500}}>{cust?.name||'—'}</td>
                   <td><span style={{fontSize:10,background:p.delivery_type==='DDP'?'#1e3a5f':'#1e3a2f',color:p.delivery_type==='DDP'?'#38bdf8':'#34d399',borderRadius:4,padding:'2px 5px',fontFamily:"'DM Mono',monospace"}}>{p.delivery_type}</span></td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#94a3b8'}}>{fmtC(p.purchase_price)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace"}}>{p.qty}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtC(p.unit_price)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtL(gross)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#34d399'}}>{fmtL(p.advance)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:bal>0?'#f87171':'#34d399'}}>{fmtL(bal)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#94a3b8'}}>
+                    <input style={{...inp,width:110,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace"}}
+                      type="number" defaultValue={p.purchase_price}
+                      onBlur={e=>{ if(Number(e.target.value)!==Number(p.purchase_price)) updatePOField(p.id,'purchase_price',e.target.value); }}/>
+                  </td>
+                  <td style={{fontFamily:"'DM Mono',monospace"}}>
+                    <input style={{...inp,width:70,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace"}}
+                      type="number" defaultValue={p.qty}
+                      onBlur={e=>{ if(Number(e.target.value)!==Number(p.qty)) updatePOField(p.id,'qty',e.target.value); }}/>
+                  </td>
+                  <td style={{fontFamily:"'DM Mono',monospace"}}>
+                    <input style={{...inp,width:110,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace"}}
+                      type="number" defaultValue={p.unit_price}
+                      onBlur={e=>{ if(Number(e.target.value)!==Number(p.unit_price)) updatePOField(p.id,'unit_price',e.target.value); }}/>
+                  </td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#34d399'}}>
+                    <input style={{...inp,width:110,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace",color:'#34d399'}}
+                      type="number" defaultValue={p.advance}
+                      onBlur={e=>{ if(Number(e.target.value)!==Number(p.advance)) updatePOField(p.id,'advance',e.target.value); }}/>
+                  </td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:bal>0?'#f87171':'#34d399',fontWeight:600}}>{fmtL(bal)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b',fontSize:10}}>{p.po_date}</td>
                   <td><StatusBadge s={p.status}/></td>
+                  <td>
+                    <div style={{display:'flex',gap:4}}>
+                      <button onClick={()=>openEditPO(p)} style={{background:'#1e293b',border:'1px solid #334155',color:'#f59e0b',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}>✏ Edit</button>
+                      <button onClick={()=>askDelete('po',p.id,`PO ${p.id}`,()=>deletePO(p.id))} style={{background:'#1e293b',border:'1px solid #334155',color:'#f87171',borderRadius:6,padding:'4px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button>
+                    </div>
+                  </td>
                   <td><select style={{...inp,width:'auto',fontSize:10,padding:'3px 6px'}} value={p.status} onChange={e=>updatePOStatus(p.id,e.target.value)}>{PO_STAGES.map(s=><option key={s}>{s}</option>)}</select></td>
                 </tr>
               );})}</tbody>
             </table>
           </div>
         </div>)}
+
+        {/* ════ PO EDIT MODAL ════ */}
+        {editPO&&(
+          <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:20}} onClick={e=>{ if(e.target===e.currentTarget) setEditPO(null); }}>
+            <div style={{background:'#0f172a',border:'1px solid #334155',borderRadius:20,padding:28,width:'100%',maxWidth:760,maxHeight:'90vh',overflowY:'auto',boxShadow:'0 24px 64px rgba(0,0,0,0.7)'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+                <div>
+                  <div style={{fontFamily:"'DM Mono',monospace",color:'#f59e0b',fontSize:13}}>EDIT PURCHASE ORDER</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",color:'#64748b',fontSize:11,marginTop:2}}>{editPO.id}</div>
+                </div>
+                <button onClick={()=>setEditPO(null)} style={{background:'transparent',border:'1px solid #334155',color:'#64748b',borderRadius:8,padding:'6px 12px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12}}>✕ Close</button>
+              </div>
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
+                <div><label style={lbl}>Customer *</label>
+                  <select style={inp} value={editForm.customer_id} onChange={e=>setEditForm({...editForm,customer_id:e.target.value})}>
+                    {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div><label style={lbl}>Delivery Type</label>
+                  <select style={inp} value={editForm.delivery_type} onChange={e=>setEditForm({...editForm,delivery_type:e.target.value})}>
+                    <option value="DDP">DDP</option><option value="EXW">EXW</option>
+                  </select>
+                </div>
+                <div><label style={lbl}>Qty *</label>
+                  <input style={inp} type="number" value={editForm.qty} onChange={e=>setEditForm({...editForm,qty:e.target.value})}/>
+                </div>
+                <div><label style={lbl}>Unit Selling Price (₹) *</label>
+                  <input style={inp} type="number" value={editForm.unit_price} onChange={e=>setEditForm({...editForm,unit_price:e.target.value})}/>
+                </div>
+              </div>
+
+              <div style={{background:'#0a0e1a',border:'1px solid #334155',borderRadius:10,padding:14,marginBottom:14}}>
+                <div style={{fontSize:10,color:'#6366f1',fontFamily:"'DM Mono',monospace",marginBottom:10}}>VENDOR / PURCHASE</div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                  <div><label style={lbl}>Vendor Name</label>
+                    <input style={inp} type="text" value={editForm.vendor_name} onChange={e=>setEditForm({...editForm,vendor_name:e.target.value})}/>
+                  </div>
+                  <div><label style={lbl}>Purchase Price (₹) *</label>
+                    <input style={{...inp,borderColor:Number(editForm.purchase_price)!==(editForm.delivery_type==='DDP'?settings.default_purchase_price_ddp:settings.default_purchase_price_exw)?'#6366f1':'#334155'}}
+                      type="number" value={editForm.purchase_price} onChange={e=>setEditForm({...editForm,purchase_price:e.target.value})}/>
+                    {Number(editForm.purchase_price)!==(editForm.delivery_type==='DDP'?settings.default_purchase_price_ddp:settings.default_purchase_price_exw)&&<div style={{fontSize:10,color:'#6366f1',marginTop:3}}>⚡ Non-MSA price</div>}
+                  </div>
+                  <div><label style={lbl}>Vendor Invoice No.</label>
+                    <input style={inp} type="text" value={editForm.vendor_invoice_no} onChange={e=>setEditForm({...editForm,vendor_invoice_no:e.target.value})}/>
+                  </div>
+                  <div><label style={lbl}>Purchase Date</label>
+                    <input style={inp} type="date" value={editForm.purchase_date} onChange={e=>setEditForm({...editForm,purchase_date:e.target.value})}/>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
+                <div><label style={lbl}>Advance Received (₹) *</label>
+                  <input style={inp} type="number" value={editForm.advance} onChange={e=>setEditForm({...editForm,advance:e.target.value})}/>
+                </div>
+                <div><label style={lbl}>PO Date *</label>
+                  <input style={inp} type="date" value={editForm.po_date} onChange={e=>setEditForm({...editForm,po_date:e.target.value})}/>
+                </div>
+                <div><label style={lbl}>Invoice Number</label>
+                  <input style={inp} type="text" value={editForm.invoice_no} onChange={e=>setEditForm({...editForm,invoice_no:e.target.value})}/>
+                </div>
+                <div><label style={lbl}>Invoice Date</label>
+                  <input style={inp} type="date" value={editForm.invoice_date} onChange={e=>setEditForm({...editForm,invoice_date:e.target.value})}/>
+                </div>
+                <div><label style={lbl}>Dispatch Date</label>
+                  <input style={inp} type="date" value={editForm.dispatch_date} onChange={e=>setEditForm({...editForm,dispatch_date:e.target.value})}/>
+                </div>
+                <div><label style={lbl}>Status</label>
+                  <select style={inp} value={editForm.status} onChange={e=>setEditForm({...editForm,status:e.target.value})}>
+                    {PO_STAGES.map(s=><option key={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Live profit preview */}
+              {editForm.qty&&editForm.unit_price&&editForm.purchase_price&&(
+                <div style={{background:'#0a0e1a',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:12,fontFamily:"'DM Mono',monospace",display:'flex',gap:20,flexWrap:'wrap'}}>
+                  <span style={{color:'#64748b'}}>Invoice: <strong style={{color:'#f1f5f9'}}>{fmtL(editForm.qty*editForm.unit_price)}</strong></span>
+                  <span style={{color:'#64748b'}}>Cost: <strong style={{color:'#f1f5f9'}}>{fmtL(editForm.qty*editForm.purchase_price)}</strong></span>
+                  <span style={{color:'#64748b'}}>Gross Profit: <strong style={{color:(editForm.qty*editForm.unit_price-editForm.qty*editForm.purchase_price)>=0?'#34d399':'#f87171'}}>{fmtL(editForm.qty*editForm.unit_price-editForm.qty*editForm.purchase_price)}</strong></span>
+                  <span style={{color:'#64748b'}}>Balance Due: <strong style={{color:'#f87171'}}>{fmtL(Math.max(0,editForm.qty*editForm.unit_price-editForm.advance))}</strong></span>
+                </div>
+              )}
+
+              <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+                <button onClick={()=>setEditPO(null)} style={{background:'transparent',border:'1px solid #334155',color:'#64748b',borderRadius:8,padding:'10px 20px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12}}>Cancel</button>
+                <button onClick={saveEditPO} disabled={saving} style={{...btn(saving),padding:'10px 28px'}}>{saving?'Saving…':'SAVE CHANGES →'}</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ════ CN/FOC ════ */}
         {view==='cns'&&(<div>
@@ -946,7 +1182,7 @@ export default function DashboardPage() {
           </div>
           <div style={{...card,overflow:'hidden'}}>
             <table>
-              <thead><tr>{['ID','PO','Customer','Type','CN Amount','FOC Units','FOC Cost','Date','Remarks'].map(h=><th key={h}>{h}</th>)}</tr></thead>
+              <thead><tr>{['ID','PO','Customer','Type','CN Amount','FOC Units','FOC Cost','Date','Remarks',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
               <tbody>{cns.map(c=>{ const cust=customers.find(x=>x.id===c.customer_id),po=pos.find(p=>p.id===c.po_id),fc=c.type==='FOC'?c.foc_units*Number(po?.purchase_price||0):0; return (
                 <tr key={c.id}>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#f59e0b'}}>{c.id}</td>
@@ -958,6 +1194,7 @@ export default function DashboardPage() {
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#f87171'}}>{c.type==='FOC'?fmtL(fc):'—'}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b'}}>{c.cn_date}</td>
                   <td style={{color:'#94a3b8',fontSize:11}}>{c.note}</td>
+                  <td><button onClick={()=>askDelete('cn',c.id,`${c.type==='CNNote'?'Credit Note':'FOC'} ${c.id}`,()=>deleteCN(c.id))} style={{background:'#1e293b',border:'1px solid #334155',color:'#f87171',borderRadius:6,padding:'4px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
                 </tr>
               );})}</tbody>
             </table>
@@ -1070,17 +1307,33 @@ export default function DashboardPage() {
           </div>
           {mfrCNAnalytics.map(cn=>(
             <div key={cn.id} style={{...card,marginBottom:10,overflow:'hidden'}}>
-              <div style={{display:'flex',alignItems:'center',gap:12,padding:'12px 18px',cursor:'pointer',borderBottom:expandedMfrCN===cn.id?'1px solid #1e293b':'none'}} onClick={()=>setExpandedMfrCN(expandedMfrCN===cn.id?null:cn.id)}>
-                <div style={{fontFamily:"'DM Mono',monospace",color:'#34d399',fontSize:13,fontWeight:500}}>{cn.cn_ref}</div>
-                <div style={{fontSize:11,color:'#64748b'}}>{cn.cn_date}</div>
-                {cn.description&&<div style={{fontSize:11,color:'#94a3b8'}}>{cn.description}</div>}
-                <div style={{marginLeft:'auto',display:'flex',gap:18,alignItems:'center'}}>
-                  {[['Total',cn.total_value,'#34d399'],['Used',cn.totalUsed,'#f87171'],['Balance',cn.balance,cn.balance>=0?'#f59e0b':'#f87171']].map(([l,v,c])=><div key={l} style={{textAlign:'right'}}><div style={{fontSize:9,color:'#64748b'}}>{l}</div><div style={{fontFamily:"'DM Mono',monospace",color:c,fontWeight:l==='Balance'?600:400}}>{fmtL(v)}</div></div>)}
-                  <div style={{width:70}}><div style={{height:3,background:'#1e293b',borderRadius:2,overflow:'hidden'}}><div style={{height:'100%',width:`${Math.min(100,(cn.totalUsed/cn.total_value)*100)}%`,background:'#f59e0b',borderRadius:2}}/></div></div>
-                  <div style={{color:'#475569',fontSize:12}}>{expandedMfrCN===cn.id?'▲':'▼'}</div>
+              <div style={{display:'flex',alignItems:'center',gap:12,padding:'12px 18px',borderBottom:expandedMfrCN===cn.id?'1px solid #1e293b':'none'}}>
+                <div style={{cursor:'pointer',flex:1,display:'flex',alignItems:'center',gap:12}} onClick={()=>setExpandedMfrCN(expandedMfrCN===cn.id?null:cn.id)}>
+                  <div style={{fontFamily:"'DM Mono',monospace",color:'#34d399',fontSize:13,fontWeight:500}}>{cn.cn_ref}</div>
+                  <div style={{fontSize:11,color:'#64748b'}}>{cn.cn_date}</div>
+                  {cn.description&&<div style={{fontSize:11,color:'#94a3b8'}}>{cn.description}</div>}
+                  <div style={{marginLeft:'auto',display:'flex',gap:18,alignItems:'center'}}>
+                    {[['Total',cn.total_value,'#34d399'],['Used',cn.totalUsed,'#f87171'],['Balance',cn.balance,cn.balance>=0?'#f59e0b':'#f87171']].map(([l,v,c])=><div key={l} style={{textAlign:'right'}}><div style={{fontSize:9,color:'#64748b'}}>{l}</div><div style={{fontFamily:"'DM Mono',monospace",color:c,fontWeight:l==='Balance'?600:400}}>{fmtL(v)}</div></div>)}
+                    <div style={{width:70}}><div style={{height:3,background:'#1e293b',borderRadius:2,overflow:'hidden'}}><div style={{height:'100%',width:`${Math.min(100,(cn.totalUsed/cn.total_value)*100)}%`,background:'#f59e0b',borderRadius:2}}/></div></div>
+                    <div style={{color:'#475569',fontSize:12}}>{expandedMfrCN===cn.id?'▲':'▼'}</div>
+                  </div>
                 </div>
+                <button onClick={e=>{e.stopPropagation();askDelete('mfrcn',cn.id,`Mfr CN ${cn.cn_ref}`,()=>deleteMfrCN(cn.id));}} style={{background:'#1e293b',border:'1px solid #334155',color:'#f87171',borderRadius:6,padding:'4px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace",flexShrink:0}}>🗑</button>
               </div>
-              {expandedMfrCN===cn.id&&(cn.expenses.length===0?<div style={{padding:'12px 18px',color:'#475569',fontSize:12}}>No expenses yet.</div>:<table><thead><tr>{['Expense','Date','Base','GST%','GST','Total','Vendor','Ref'].map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{cn.expenses.map(e=><tr key={e.id}><td style={{fontWeight:500}}>{e.expense_name}</td><td style={{fontFamily:"'DM Mono',monospace",color:'#64748b',fontSize:10}}>{e.expense_date}</td><td style={{fontFamily:"'DM Mono',monospace"}}>{fmtL(e.amount)}</td><td style={{fontFamily:"'DM Mono',monospace",color:'#94a3b8'}}>{e.gst_rate}%</td><td style={{fontFamily:"'DM Mono',monospace",color:'#f87171'}}>{fmtL(e.gst_amount)}</td><td style={{fontFamily:"'DM Mono',monospace",color:'#f87171',fontWeight:600}}>{fmtL(e.total_amount)}</td><td style={{color:'#94a3b8',fontSize:10}}>{e.vendor_name||'—'}</td><td style={{fontFamily:"'DM Mono',monospace",color:'#64748b',fontSize:10}}>{e.invoice_ref||'—'}</td></tr>)}</tbody></table>)}
+              {expandedMfrCN===cn.id&&(cn.expenses.length===0
+                ?<div style={{padding:'12px 18px',color:'#475569',fontSize:12}}>No expenses yet.</div>
+                :<table><thead><tr>{['Expense','Date','Base','GST%','GST','Total','Vendor','Ref',''].map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{cn.expenses.map(e=><tr key={e.id}>
+                  <td style={{fontWeight:500}}>{e.expense_name}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b',fontSize:10}}>{e.expense_date}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtL(e.amount)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#94a3b8'}}>{e.gst_rate}%</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#f87171'}}>{fmtL(e.gst_amount)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#f87171',fontWeight:600}}>{fmtL(e.total_amount)}</td>
+                  <td style={{color:'#94a3b8',fontSize:10}}>{e.vendor_name||'—'}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b',fontSize:10}}>{e.invoice_ref||'—'}</td>
+                  <td><button onClick={()=>askDelete('mfrexp',e.id,`${e.expense_name} — ${fmtL(e.total_amount)}`,()=>deleteMfrExp(e.id))} style={{background:'#1e293b',border:'1px solid #334155',color:'#f87171',borderRadius:6,padding:'3px 7px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
+                </tr>)}</tbody></table>
+              )}
             </div>
           ))}
         </div>)}
