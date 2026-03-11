@@ -80,6 +80,124 @@ const BarChart = ({data,valueKey,labelKey,color='#b8924a',height=80}) => {
 const catColor = cat => ({'Salary':'#2d7fa8','Rent':'#6a5a9a','Travel':'#c87030','Professional Fees':'#b8924a','Utilities':'#2d8a5e','Marketing':'#a040b0','Logistics':'#3a8a5a','Insurance':'#7a6e64','Office Supplies':'#2d8fa8','Other':'#8a7e72'}[cat]||'#8a7e72');
 
 
+
+// Inline invoice sub-panel for Orders tab
+const POInvoicePanel = ({po, fin, poInvoices, invoiceForm, setInvoiceForm, onAdd, onEdit, onDelete, saving, settings, inp, lbl, btn, fmtL, fmtC, fmt}) => {
+  const invRows = poInvoices.filter(i=>i.po_id===po.id);
+  const alreadyBilled = invRows.reduce((s,i)=>s+i.qty,0);
+  const remaining = po.qty - alreadyBilled;
+
+  // Pre-fill form defaults when panel opens
+  const f = invoiceForm;
+
+  return (
+    <div style={{padding:'16px 20px'}}>
+      {/* Existing invoices */}
+      {invRows.length>0&&(
+        <div style={{marginBottom:14}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',letterSpacing:'.12em',marginBottom:8}}>INVOICES RAISED</div>
+          <table>
+            <thead><tr>{['Invoice No','Date','Qty','Unit Price','Discount','Net Taxable','GST%','GST','Total','Notes',''].map(h=><th key={h} style={{fontSize:9,padding:'4px 8px'}}>{h}</th>)}</tr></thead>
+            <tbody>{invRows.sort((a,b)=>a.invoice_date>b.invoice_date?1:-1).map(inv=>{
+              const net=inv.qty*inv.unit_price-Number(inv.discount_amount||0);
+              const gst=net*(Number(inv.gst_rate||12)/100);
+              return (
+                <tr key={inv.id}>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a',fontWeight:600,fontSize:11}}>{inv.invoice_no}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:11}}>{inv.invoice_date}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",textAlign:'center',fontWeight:600}}>{inv.qty}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtC(inv.unit_price)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{Number(inv.discount_amount)>0?`−${fmtL(inv.discount_amount)}`:'—'}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#4a8fa8'}}>{fmtL(net)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a',fontSize:10}}>{inv.gst_rate}%</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a'}}>{fmtL(gst)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#2d7fa8',fontWeight:700}}>{fmtL(net+gst)}</td>
+                  <td style={{color:'#8a7e72',fontSize:10}}>{inv.notes||'—'}</td>
+                  <td style={{whiteSpace:'nowrap'}}>
+                    <button onClick={()=>onEdit(inv)} style={{background:'#fdf6ec',border:'1px solid #e0d8cc',color:'#b8924a',borderRadius:3,padding:'3px 8px',cursor:'pointer',fontSize:9,fontFamily:"'DM Mono',monospace",marginRight:3}}>✏</button>
+                    <button onClick={()=>onDelete(inv.id)} style={{background:'#fef0f0',border:'1px solid #e8d0d0',color:'#b85a5a',borderRadius:3,padding:'3px 7px',cursor:'pointer',fontSize:9,fontFamily:"'DM Mono',monospace"}}>🗑</button>
+                  </td>
+                </tr>
+              );
+            })}</tbody>
+            <tfoot><tr>
+              <td colSpan={2} style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',padding:'6px 8px'}}>TOTAL BILLED: {alreadyBilled} / {po.qty} units</td>
+              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#2d8a5e',textAlign:'center'}}>{alreadyBilled}</td>
+              <td/><td/>
+              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#4a8fa8'}}>{fmtL(fin.invoicedNetTax)}</td>
+              <td/><td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#6a5a9a'}}>{fmtL(fin.invoicedGst)}</td>
+              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#2d7fa8',fontSize:13}}>{fmtL(fin.invoicedAmt)}</td>
+              <td colSpan={2}/>
+            </tr></tfoot>
+          </table>
+        </div>
+      )}
+
+      {/* Add new invoice form */}
+      {remaining>0&&(
+        <div style={{background:'#fdf6ec',border:'1px dashed #d4cdc2',borderRadius:6,padding:'14px 16px'}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#b8924a',letterSpacing:'.12em',marginBottom:10}}>
+            + ADD INVOICE — {remaining} unit{remaining>1?'s':''} unbilled
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:10,alignItems:'flex-end'}}>
+            <div><label style={lbl}>Invoice No *</label>
+              <input style={inp} type="text" placeholder="INV-0001" value={f.invoice_no}
+                onChange={e=>setInvoiceForm({...f,invoice_no:e.target.value})}/>
+            </div>
+            <div><label style={lbl}>Date *</label>
+              <input style={inp} type="date" value={f.invoice_date}
+                onChange={e=>setInvoiceForm({...f,invoice_date:e.target.value})}/>
+            </div>
+            <div><label style={lbl}>Qty * (max {remaining})</label>
+              <input style={inp} type="number" min="1" max={remaining} value={f.qty}
+                onChange={e=>setInvoiceForm({...f,qty:e.target.value})}/>
+            </div>
+            <div><label style={lbl}>Unit Price (₹) *</label>
+              <input style={{...inp,borderColor:f.unit_price&&Number(f.unit_price)!==Number(po.unit_price)?'#8060c0':'#e0d8cc'}} type="number"
+                placeholder={String(po.unit_price)}
+                value={f.unit_price||po.unit_price}
+                onChange={e=>setInvoiceForm({...f,unit_price:e.target.value})}/>
+            </div>
+            <div><label style={lbl}>Discount (₹)</label>
+              <input style={inp} type="number" min="0" value={f.discount_amount}
+                onChange={e=>setInvoiceForm({...f,discount_amount:e.target.value})}/>
+            </div>
+            <div><label style={lbl}>GST Rate %</label>
+              <select style={inp} value={f.gst_rate||po.gst_rate||settings.gst_rate_sales||12}
+                onChange={e=>setInvoiceForm({...f,gst_rate:e.target.value})}>
+                {[0,5,12,18,28].map(r=><option key={r} value={r}>{r}%</option>)}
+              </select>
+            </div>
+            <div style={{display:'flex',alignItems:'flex-end'}}>
+              <button onClick={onAdd} disabled={saving}
+                style={{...btn(saving),width:'100%',padding:'9px 0',fontSize:11}}>
+                {saving?'…':'ADD →'}
+              </button>
+            </div>
+          </div>
+          {/* Live preview */}
+          {f.qty&&(Number(f.unit_price||po.unit_price))&&(()=>{
+            const up=Number(f.unit_price||po.unit_price);
+            const q=Number(f.qty||0);
+            const disc=Number(f.discount_amount||0);
+            const rate=Number(f.gst_rate||po.gst_rate||settings.gst_rate_sales||12);
+            const net=q*up-disc;
+            const gstAmt=net*(rate/100);
+            return <div style={{marginTop:8,display:'flex',gap:14,fontSize:11,fontFamily:"'DM Mono',monospace",color:'#8a7e72'}}>
+              <span>Taxable: <strong style={{color:'#2c2520'}}>{fmtL(net)}</strong></span>
+              <span>GST ({rate}%): <strong style={{color:'#6a5a9a'}}>{fmtL(gstAmt)}</strong></span>
+              <span>Total: <strong style={{color:'#2d7fa8'}}>{fmtL(net+gstAmt)}</strong></span>
+            </div>;
+          })()}
+        </div>
+      )}
+      {remaining===0&&invRows.length>0&&(
+        <div style={{fontSize:11,color:'#2d8a5e',fontFamily:"'DM Mono',monospace",padding:'6px 0'}}>✓ All {po.qty} units fully billed</div>
+      )}
+    </div>
+  );
+};
+
 // Reusable searchable customer picker
 const SearchableCustSelect = ({customers, value, onChange, placeholder='Select customer…', inputStyle}) => {
   const [q, setQ] = useState('');
@@ -137,6 +255,7 @@ export default function DashboardPage() {
   const [pis,setPIs]           = useState([]);
   const [sites,setSites]       = useState([]);
   const [receipts,setReceipts] = useState([]);
+  const [poInvoices,setPoInvoices] = useState([]);
   const [ledgerCust,setLedgerCust] = useState(null);
   const [settings,setSettings] = useState({default_purchase_price_exw:400000,default_purchase_price_ddp:403000,gst_rate_sales:12});
   const [loading,setLoading]   = useState(true);
@@ -151,6 +270,7 @@ export default function DashboardPage() {
   })();
   const [selectedFY,setFY]     = useState(currentFY);
   const [expandedMfrCN,setExpandedMfrCN] = useState(null);
+  const [expandedPOInv,setExpandedPOInv] = useState(null); // po_id
   const [expCatFilter,setExpCatFilter]   = useState('All');
   const [searchPO,setSearchPO]           = useState('');
   const [searchCust,setSearchCust]       = useState('');
@@ -191,6 +311,9 @@ export default function DashboardPage() {
   const [piForm,setPiForm]       = useState({pi_number:'',po_id:'',customer_id:'',pi_date:'',amount:'',gst_amount:'',total_amount:'',advance_due:'',advance_received:'',advance_date:'',payment_terms:'100% Advance against PI',status:'Pending',notes:''});
   const [siteForm,setSiteForm]   = useState({po_id:'',site_name:'',address:'',gstin:'',contact_name:'',phone:'',qty:'',notes:''});
   const [receiptForm,setReceiptForm] = useState({receipt_no:'',customer_id:'',po_id:'',receipt_date:'',amount:'',payment_mode:'Bank Transfer',reference:'',notes:''});
+  const [invoiceForm,setInvoiceForm] = useState({po_id:'',invoice_no:'',invoice_date:'',qty:'',unit_price:'',discount_amount:'0',gst_rate:'',notes:''});
+  const [editInvoice,setEditInvoice] = useState(null);
+  const [editInvoiceForm,setEditInvoiceForm] = useState({});
 
   const [editPO,setEditPO]           = useState(null);
   const [editForm,setEditForm]       = useState({});
@@ -227,7 +350,7 @@ export default function DashboardPage() {
     if (linked.length>0) { showToast(`⛔ Cannot delete — ${linked.length} CN/FOC linked to this PO. Remove them first.`); return; }
     setSaving(true);
     await supabase.from('purchase_orders').delete().eq('id',id);
-    showToast('PO deleted'); await fetchAll(); setSaving(false);
+    showToast('PO deleted'); setExpandedPOInv(null); await fetchAll(); setSaving(false);
   };
 
   const deleteCN = async (id) => {
@@ -335,7 +458,7 @@ export default function DashboardPage() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const [r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15] = await Promise.all([
+    const [r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15,r16] = await Promise.all([
       supabase.from('customers').select('*').order('id'),
       supabase.from('purchase_orders').select('*').order('created_at'),
       supabase.from('credit_notes').select('*').order('created_at'),
@@ -351,13 +474,14 @@ export default function DashboardPage() {
       supabase.from('proforma_invoices').select('*').order('pi_date',{ascending:false}),
       supabase.from('delivery_sites').select('*').order('created_at'),
       supabase.from('payment_receipts').select('*').order('receipt_date',{ascending:false}),
+      supabase.from('po_invoices').select('*').order('invoice_date',{ascending:false}),
     ]);
     setCust(r1.data||[]);  setPos(r2.data||[]);  setCns(r3.data||[]);
     setMfrCNs(r5.data||[]); setMfrExp(r6.data||[]);
     setTargets(r7.data||[]); setPipeline(r8.data||[]);
     setCashTxns(r9.data||[]); setBizExp(r10.data||[]);
     setVendors(r11.data||[]); setDeliveries(r12.data||[]);
-    setPIs(r13.data||[]); setSites(r14.data||[]); setReceipts(r15.data||[]);
+    setPIs(r13.data||[]); setSites(r14.data||[]); setReceipts(r15.data||[]); setPoInvoices(r16.data||[]);
     if (r4.data) {
       const p={}; r4.data.forEach(r=>{ p[r.key]=Number(r.value); });
       setSettings(p);
@@ -716,6 +840,79 @@ export default function DashboardPage() {
     showToast('Receipt deleted'); await fetchAll(); setSaving(false);
   };
 
+
+  // ── PO Invoices CRUD ─────────────────────────────────────────────────────
+  const addPOInvoice = async (poId) => {
+    const f = invoiceForm;
+    if (!f.invoice_no||!f.invoice_date||!f.qty||!f.unit_price) {
+      showToast('Fill invoice no, date, qty and unit price','error'); return;
+    }
+    // Validate qty doesn't exceed remaining unbilled
+    const po = pos.find(p=>p.id===poId);
+    const alreadyBilled = poInvoices.filter(i=>i.po_id===poId).reduce((s,i)=>s+i.qty,0);
+    const remaining = (po?.qty||0) - alreadyBilled;
+    if (Number(f.qty) > remaining) {
+      showToast(`⛔ Cannot bill ${f.qty} units — only ${remaining} unbilled remaining`,'error'); return;
+    }
+    setSaving(true);
+    const {error}=await supabase.from('po_invoices').insert([{
+      po_id: poId,
+      invoice_no: f.invoice_no.trim(),
+      invoice_date: f.invoice_date,
+      qty: Number(f.qty),
+      unit_price: Number(f.unit_price),
+      discount_amount: Number(f.discount_amount||0),
+      gst_rate: Number(f.gst_rate||po?.gst_rate||12),
+      notes: f.notes||null
+    }]);
+    if (error) showToast('Error: '+error.message,'error');
+    else {
+      showToast('Invoice added ✓');
+      setInvoiceForm(f=>({...f,invoice_no:'',invoice_date:'',qty:'',notes:''}));
+      await fetchAll();
+    }
+    setSaving(false);
+  };
+
+  const openEditInvoice = inv => {
+    setEditInvoiceForm({
+      invoice_no: inv.invoice_no,
+      invoice_date: inv.invoice_date,
+      qty: String(inv.qty),
+      unit_price: String(inv.unit_price),
+      discount_amount: String(inv.discount_amount||0),
+      gst_rate: String(inv.gst_rate||12),
+      notes: inv.notes||''
+    });
+    setEditInvoice(inv);
+  };
+
+  const saveEditInvoice = async () => {
+    const f = editInvoiceForm;
+    if (!f.invoice_no||!f.invoice_date||!f.qty||!f.unit_price) {
+      showToast('Fill all required fields','error'); return;
+    }
+    setSaving(true);
+    const {error}=await supabase.from('po_invoices').update({
+      invoice_no: f.invoice_no.trim(),
+      invoice_date: f.invoice_date,
+      qty: Number(f.qty),
+      unit_price: Number(f.unit_price),
+      discount_amount: Number(f.discount_amount||0),
+      gst_rate: Number(f.gst_rate||12),
+      notes: f.notes||null
+    }).eq('id',editInvoice.id);
+    if (error) showToast('Error: '+error.message,'error');
+    else { showToast('Invoice updated ✓'); setEditInvoice(null); await fetchAll(); }
+    setSaving(false);
+  };
+
+  const deletePOInvoice = async (id) => {
+    setSaving(true);
+    await supabase.from('po_invoices').delete().eq('id',id);
+    showToast('Invoice deleted'); await fetchAll(); setSaving(false);
+  };
+
   // ── Per-PO financial helper (based on DELIVERED qty) ─────────────────────
   // deliveredQty = sum of all delivery_entries for that PO
   // invoicedAmt  = deliveredQty × unit_price − discount_prorated + GST
@@ -725,28 +922,41 @@ export default function DashboardPage() {
     const orderedQty   = p.qty || 0;
     const unitPrice    = Number(p.unit_price) || 0;
     const discountAmt  = Number(p.discount_amount) || 0;
-    const gstRate      = settings.gst_rate_sales || 12;
+    const poGstRate    = Number(p.gst_rate ?? settings.gst_rate_sales ?? 12);
     const advance      = Number(p.advance) || 0;
 
-    // Gross ordered
-    const orderedGross = orderedQty * unitPrice;
-    // Pro-rata discount on delivered portion
-    const discountDelivered = orderedGross > 0 ? (deliveredQty / orderedQty) * discountAmt : 0;
+    // Ordered totals (unchanged)
+    const orderedGross    = orderedQty * unitPrice;
+    const orderedDiscount = discountAmt;
+    const orderedNetTax   = orderedGross - orderedDiscount;
+    const orderedGst      = orderedNetTax * (poGstRate / 100);
+    const orderedTotal    = orderedNetTax + orderedGst;
+    const balQty          = orderedQty - deliveredQty;
+
+    // P2.6: invoicedAmt now comes from actual po_invoices rows
+    const invRows = poInvoices.filter(i=>i.po_id===p.id);
+    const invoicedQty     = invRows.reduce((s,i)=>s+i.qty, 0);
+    const invoicedNetTax  = invRows.reduce((s,i)=>{ const net=i.qty*i.unit_price-Number(i.discount_amount||0); return s+net; }, 0);
+    const invoicedGst     = invRows.reduce((s,i)=>{ const net=i.qty*i.unit_price-Number(i.discount_amount||0); return s+net*(Number(i.gst_rate||poGstRate)/100); }, 0);
+    const invoicedAmt     = invoicedNetTax + invoicedGst;
+    const billedQty       = invoicedQty; // alias for clarity
+    const unbilledQty     = orderedQty - invoicedQty;
+    const balanceDue      = Math.max(0, invoicedAmt - advance);
+
+    // Legacy delivery-based values kept for delivery tracker display
     const deliveredGross    = deliveredQty * unitPrice;
+    const discountDelivered = orderedGross > 0 ? (deliveredQty / orderedQty) * discountAmt : 0;
     const deliveredNetTax   = deliveredGross - discountDelivered;
-    const deliveredGst      = deliveredNetTax * (gstRate / 100);
-    const invoicedAmt       = deliveredNetTax + deliveredGst;
-    const balanceDue        = Math.max(0, invoicedAmt - advance);
+    const deliveredGst      = deliveredNetTax * (poGstRate / 100);
 
-    // Full order values (for reference / ordered column)
-    const orderedDiscount   = discountAmt;
-    const orderedNetTax     = orderedGross - orderedDiscount;
-    const orderedGst        = orderedNetTax * (gstRate / 100);
-    const orderedTotal      = orderedNetTax + orderedGst;
-    const balQty            = orderedQty - deliveredQty;
-
-    return { deliveredQty, orderedQty, balQty, unitPrice, orderedGross, orderedDiscount, orderedNetTax, orderedGst, orderedTotal, deliveredGross, discountDelivered, deliveredNetTax, deliveredGst, invoicedAmt, advance, balanceDue };
-  }, [deliveries, settings]);
+    return {
+      deliveredQty, orderedQty, balQty, unitPrice, poGstRate,
+      orderedGross, orderedDiscount, orderedNetTax, orderedGst, orderedTotal,
+      deliveredGross, discountDelivered, deliveredNetTax, deliveredGst,
+      invoicedQty, billedQty, unbilledQty, invoicedNetTax, invoicedGst,
+      invoicedAmt, advance, balanceDue, invRows
+    };
+  }, [deliveries, poInvoices, settings]);
 
 
   const analytics = useMemo(()=>{
@@ -834,9 +1044,11 @@ export default function DashboardPage() {
     const fyMonths=FY_MONTHS(fy.fy_label);
 
     const monthly=fyMonths.map(m=>{
-      // B1 fix: use invoice_date for GST point of liability; fall back to po_date
+      // P2.6 + B1: output GST from actual po_invoices rows bucketed by invoice_date
+      const mInvs=poInvoices.filter(i=>i.invoice_date>=m.start&&i.invoice_date<=m.end);
+      const outputGST=mInvs.reduce((s,i)=>{ const r=Number(i.gst_rate||settings.gst_rate_sales||12)/100; const net=i.qty*i.unit_price-Number(i.discount_amount||0); return s+net*r; },0);
+      // Input GST on purchase: use invoice_date if available, fallback po_date
       const mPos=pos.filter(p=>{ const d=p.invoice_date||p.po_date; return d>=m.start&&d<=m.end; });
-      const outputGST=mPos.reduce((s,p)=>{ const r=(Number(p.gst_rate??settings.gst_rate_sales??12))/100; const net=p.qty*p.unit_price-(Number(p.discount_amount)||0); return s+net*r; },0);
       const inputGSTPurch=mPos.reduce((s,p)=>{ const r=(Number(p.gst_rate??settings.gst_rate_sales??12))/100; return s+p.qty*Number(p.purchase_price)*r; },0);
       const inputGSTMfrExp=mfrExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.gst_amount),0);
       const inputGSTBizExp=bizExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end&&e.is_gst_claimable).reduce((s,e)=>s+Number(e.gst_amount),0);
@@ -1570,7 +1782,7 @@ export default function DashboardPage() {
           </div>
           <div style={{...card,overflow:'auto'}}>
             <table>
-              <thead><tr>{['PO No','Customer','Type','Vendor','Ordered Qty','Ordered Value','Discount','Delivered Qty','Bal Qty','Invoiced Amt','Advance','Balance Due','Date','Stage','Edit','Status'].map(h=><th key={h}>{h}</th>)}</tr></thead>
+              <thead><tr>{['PO No','Customer','Type','Vendor','Ordered Qty','Ordered Value','Discount','Delivered Qty','Bal Qty','Billed Qty','Invoiced Amt','Advance','Balance Due','Date','Stage','Edit',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
               <tbody>{pos.filter(p=>{ if(!searchPO) return true; const q=searchPO.toLowerCase(); const c=customers.find(x=>x.id===p.customer_id); return p.id?.toLowerCase().includes(q)||c?.name?.toLowerCase().includes(q)||p.vendor_name?.toLowerCase().includes(q); }).map(p=>{ 
                 const cust=customers.find(c=>c.id===p.customer_id);
                 const fin=poFinancials(p);
@@ -1585,9 +1797,13 @@ export default function DashboardPage() {
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{fin.orderedDiscount>0?`−${fmtL(fin.orderedDiscount)}`:'—'}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#5a9e6f',fontWeight:600,textAlign:'center'}}>{fin.deliveredQty}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:fin.balQty>0?'#b08030':'#5a9e6f',fontWeight:600,textAlign:'center'}}>{fin.balQty}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:fin.unbilledQty>0?'#c87030':'#5a9e6f',fontWeight:600,textAlign:'center'}}>
+                    {fin.billedQty}
+                    {fin.unbilledQty>0&&<div style={{fontSize:9,color:'#c87030',marginTop:1}}>{fin.unbilledQty} unbilled</div>}
+                  </td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#4a8fa8',fontWeight:600}}>
                     {fmtL(fin.invoicedAmt)}
-                    {fin.deliveredQty<fin.orderedQty&&fin.deliveredQty>0&&<div style={{fontSize:9,color:'#a09689',marginTop:1}}>of {fmtL(fin.orderedTotal)} ordered</div>}
+                    {fin.invRows.length>0&&<div style={{fontSize:9,color:'#a09689',marginTop:1}}>{fin.invRows.length} invoice{fin.invRows.length>1?'s':''}</div>}
                   </td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#5a9e6f'}}>
                     <input style={{...inp,width:110,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace",color:'#5a9e6f'}} type="number" defaultValue={p.advance} onBlur={e=>{ if(Number(e.target.value)!==Number(p.advance)) updatePOField(p.id,'advance',e.target.value); }}/>
@@ -1601,8 +1817,22 @@ export default function DashboardPage() {
                       <button onClick={()=>askDelete('po',p.id,`PO ${p.id}`,()=>deletePO(p.id))} style={{background:'#fef0f0',border:'1px solid #e8d0d0',color:'#b85a5a',borderRadius:4,padding:'4px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button>
                     </div>
                   </td>
-                  <td><select style={{...inp,width:'auto',fontSize:10,padding:'3px 6px'}} value={p.status} onChange={e=>updatePOStatus(p.id,e.target.value)}>{PO_STAGES.map(s=><option key={s}>{s}</option>)}</select></td>
+                  <td>
+                    <button onClick={()=>setExpandedPOInv(expandedPOInv===p.id?null:p.id)}
+                      style={{background:expandedPOInv===p.id?'#e8f4ec':'#fdf6ec',border:`1px solid ${expandedPOInv===p.id?'#5a9e6f':'#e0d8cc'}`,color:expandedPOInv===p.id?'#2d8a5e':'#b8924a',borderRadius:4,padding:'4px 10px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}>
+                      🧾 {fin.invRows.length} {expandedPOInv===p.id?'▲':'▼'}
+                    </button>
+                  </td>
                 </tr>
+                {expandedPOInv===p.id&&(
+                  <tr key={`inv-${p.id}`}>
+                    <td colSpan={17} style={{padding:0,background:'#f5f0e8',borderBottom:'2px solid #b8924a30'}}>
+                      <POInvoicePanel po={p} fin={fin} poInvoices={poInvoices} invoiceForm={invoiceForm} setInvoiceForm={setInvoiceForm}
+                        onAdd={()=>addPOInvoice(p.id)} onEdit={openEditInvoice} onDelete={id=>askDelete('poinv',id,`Invoice`,()=>deletePOInvoice(id))}
+                        saving={saving} settings={settings} inp={inp} lbl={lbl} btn={btn} fmtL={fmtL} fmtC={fmtC} fmt={fmt}/>
+                    </td>
+                  </tr>
+                )}
               );})}</tbody>
             </table>
           </div>
@@ -2203,13 +2433,20 @@ export default function DashboardPage() {
             const custReceipts=receipts.filter(r=>r.customer_id===ledgerCust);
             const custCNs=cns.filter(c=>c.customer_id===ledgerCust);
 
-            // Build ledger entries: PO invoices + payments + CNs, sorted by date
+            // Build ledger entries: po_invoices rows + advances + payments + CNs
             const entries=[];
             custPOs.forEach(p=>{
-              const fin=poFinancials(p);
-              if(fin.invoicedAmt>0) entries.push({date:p.po_date,type:'Invoice',ref:p.id,description:`Invoice — ${fin.deliveredQty} units`,debit:fin.invoicedAmt,credit:0,po:p});
-              // Advance already on PO counts as receipt
-              if(p.advance>0) entries.push({date:p.po_date,type:'Advance',ref:p.id,description:`Advance received`,debit:0,credit:Number(p.advance)});
+              // P2.6: use actual invoice rows as Dr entries
+              const invRows=poInvoices.filter(i=>i.po_id===p.id);
+              invRows.forEach(inv=>{
+                const net=inv.qty*inv.unit_price-Number(inv.discount_amount||0);
+                const gst=net*(Number(inv.gst_rate||12)/100);
+                const total=net+gst;
+                entries.push({date:inv.invoice_date,type:'Invoice',ref:inv.invoice_no,description:`Tax Invoice — ${inv.qty} units @ ${fmtC(inv.unit_price)}`,debit:total,credit:0,inv});
+              });
+              // If no invoice rows yet, show nothing (no longer use poFinancials estimate)
+              // Advance on PO = credit
+              if(p.advance>0) entries.push({date:p.po_date,type:'Advance',ref:p.id,description:`Advance against ${p.id}`,debit:0,credit:Number(p.advance)});
             });
             custCNs.forEach(c=>{
               if(c.type==='CNNote') entries.push({date:c.cn_date,type:'Credit Note',ref:`CN-${c.id}`,description:c.note||'Credit Note',debit:0,credit:Number(c.amount),cn:c});
@@ -2340,6 +2577,44 @@ export default function DashboardPage() {
         </>)}
       </div>
 
+
+      {/* ── Edit Invoice Modal ── */}
+      {editInvoice&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(80,60,40,0.45)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center',padding:20}} onClick={()=>setEditInvoice(null)}>
+          <div style={{background:'#fff8f0',border:'1px solid #e0d8cc',borderRadius:8,padding:28,maxWidth:620,width:'100%',boxShadow:'0 12px 40px rgba(120,90,50,.15)'}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#b8924a'}}>EDIT INVOICE — {editInvoice.invoice_no}</div>
+              <button onClick={()=>setEditInvoice(null)} style={{background:'transparent',border:'none',color:'#a09689',cursor:'pointer',fontSize:20,lineHeight:1}}>×</button>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:14}}>
+              <div><label style={lbl}>Invoice No *</label><input style={inp} value={editInvoiceForm.invoice_no} onChange={e=>setEditInvoiceForm({...editInvoiceForm,invoice_no:e.target.value})}/></div>
+              <div><label style={lbl}>Invoice Date *</label><input style={inp} type="date" value={editInvoiceForm.invoice_date} onChange={e=>setEditInvoiceForm({...editInvoiceForm,invoice_date:e.target.value})}/></div>
+              <div><label style={lbl}>Qty *</label><input style={inp} type="number" min="1" value={editInvoiceForm.qty} onChange={e=>setEditInvoiceForm({...editInvoiceForm,qty:e.target.value})}/></div>
+              <div><label style={lbl}>Unit Price (₹) *</label><input style={inp} type="number" value={editInvoiceForm.unit_price} onChange={e=>setEditInvoiceForm({...editInvoiceForm,unit_price:e.target.value})}/></div>
+              <div><label style={lbl}>Discount (₹)</label><input style={inp} type="number" min="0" value={editInvoiceForm.discount_amount} onChange={e=>setEditInvoiceForm({...editInvoiceForm,discount_amount:e.target.value})}/></div>
+              <div><label style={lbl}>GST Rate %</label>
+                <select style={inp} value={editInvoiceForm.gst_rate} onChange={e=>setEditInvoiceForm({...editInvoiceForm,gst_rate:e.target.value})}>
+                  {[0,5,12,18,28].map(r=><option key={r} value={r}>{r}%</option>)}
+                </select>
+              </div>
+              <div style={{gridColumn:'span 3'}}><label style={lbl}>Notes</label><input style={inp} value={editInvoiceForm.notes} onChange={e=>setEditInvoiceForm({...editInvoiceForm,notes:e.target.value})}/></div>
+            </div>
+            {editInvoiceForm.qty&&editInvoiceForm.unit_price&&(()=>{
+              const net=Number(editInvoiceForm.qty)*Number(editInvoiceForm.unit_price)-Number(editInvoiceForm.discount_amount||0);
+              const gst=net*(Number(editInvoiceForm.gst_rate||12)/100);
+              return <div style={{background:'#f5f0e8',borderRadius:6,padding:'8px 14px',marginBottom:14,fontSize:12,fontFamily:"'DM Mono',monospace",display:'flex',gap:16,flexWrap:'wrap'}}>
+                <span style={{color:'#8a7e72'}}>Net Taxable: <strong style={{color:'#4a8fa8'}}>{fmtL(net)}</strong></span>
+                <span style={{color:'#8a7e72'}}>GST: <strong style={{color:'#6a5a9a'}}>{fmtL(gst)}</strong></span>
+                <span style={{color:'#8a7e72'}}>Total: <strong style={{color:'#2d7fa8'}}>{fmtL(net+gst)}</strong></span>
+              </div>;
+            })()}
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button onClick={()=>setEditInvoice(null)} style={{background:'transparent',border:'1px solid #e0d8cc',color:'#8a7e72',borderRadius:4,padding:'10px 20px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12}}>Cancel</button>
+              <button onClick={saveEditInvoice} disabled={saving} style={{...btn(saving),padding:'10px 28px'}}>{saving?'Saving…':'SAVE CHANGES →'}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* ── Edit PI Modal ── */}
       {editPI&&(
         <div style={{position:'fixed',inset:0,background:'rgba(80,60,40,0.45)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center',padding:20}} onClick={()=>setEditPI(null)}>
