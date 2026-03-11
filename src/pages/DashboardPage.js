@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/AuthContext';
 
@@ -1787,7 +1787,8 @@ export default function DashboardPage() {
                 const cust=customers.find(c=>c.id===p.customer_id);
                 const fin=poFinancials(p);
                 return (
-                <tr key={p.id}>
+                <React.Fragment key={p.id}>
+                <tr>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a',whiteSpace:'nowrap'}}>{p.id}</td>
                   <td style={{fontWeight:500}}>{cust?.name||'—'}</td>
                   <td><span style={{fontSize:10,background:p.delivery_type==='DDP'?'#dce8ed':'#dceadc',color:p.delivery_type==='DDP'?'#4a8fa8':'#5a9e6f',borderRadius:2,padding:'2px 6px',fontFamily:"'DM Mono',monospace"}}>{p.delivery_type}</span></td>
@@ -1833,6 +1834,7 @@ export default function DashboardPage() {
                     </td>
                   </tr>
                 )}
+                </React.Fragment>
               );})}</tbody>
             </table>
           </div>
