@@ -91,7 +91,7 @@ export default function DashboardPage() {
   const blankPO = s => ({po_id:'',customer_id:'',delivery_type:'DDP',qty:'',unit_price:'',discount_pct:'0',discount_amount:'0',purchase_price:s.default_purchase_price_ddp,vendor_id:'',vendor_invoice_no:'',purchase_date:'',advance:'',po_date:'',status:'PO Received',invoice_no:'',invoice_date:'',dispatch_date:'',delivered_qty:'0'});
   const [poForm,setPoForm]       = useState(blankPO(settings));
   const [cnForm,setCnForm]       = useState({po_id:'',type:'CNNote',amount:'',foc_units:'',discount_amount:'',cn_date:'',note:''});
-  const [custForm,setCustForm]   = useState({name:'',gstin:''});
+  const [custForm,setCustForm]   = useState({customer_code:'',name:'',gstin:'',contact_name:'',phone:'',email:'',address:''});
   const [vendorForm,setVendorForm] = useState({name:'',vendor_type:'Manufacturer',gstin:'',contact_name:'',phone:'',email:'',address:'',notes:''});
   const [deliveryForm,setDeliveryForm] = useState({po_id:'',delivery_date:'',qty_delivered:'',notes:''});
   const [sim,setSim]             = useState({customerId:'',extraCN:'',extraFOC:'',newPoQty:'',newPoUnitPrice:'',newPoPurchasePrice:'',newPoCNAmount:'',newPoFOCUnits:''});
@@ -103,9 +103,33 @@ export default function DashboardPage() {
   const [targetForm,setTargetForm] = useState({fy_label:'',fy_start:'',fy_end:'',target_units:'',target_value:'',target_profit:'',mfr_slab_1_units:'',mfr_slab_1_bonus:'',mfr_slab_2_units:'',mfr_slab_2_bonus:'',notes:''});
   const [bizExpForm,setBizExpForm] = useState({expense_date:'',category:'Rent',description:'',vendor_name:'',invoice_ref:'',amount:'',gst_rate:'0',is_gst_claimable:true,payment_mode:'Bank Transfer',notes:''});
 
-  const [editPO,setEditPO]       = useState(null);
-  const [editForm,setEditForm]   = useState({});
-  const [confirmDelete,setConfirmDelete] = useState(null); // {type, id, label, onConfirm}
+  const [editPO,setEditPO]           = useState(null);
+  const [editForm,setEditForm]       = useState({});
+  const [editCustomer,setEditCustomer] = useState(null);
+  const [editCustForm,setEditCustForm] = useState({});
+  const [confirmDelete,setConfirmDelete] = useState(null);
+
+  const openEditCustomer = c => {
+    setEditCustForm({
+      customer_code: c.customer_code||'',
+      name: c.name||'',
+      gstin: c.gstin||'',
+      contact_name: c.contact_name||'',
+      phone: c.phone||'',
+      email: c.email||'',
+      address: c.address||'',
+    });
+    setEditCustomer(c);
+  };
+
+  const saveEditCustomer = async () => {
+    if (!editCustForm.name) { showToast('Customer name is required'); return; }
+    setSaving(true);
+    const {error}=await supabase.from('customers').update(editCustForm).eq('id',editCustomer.id);
+    if (error) showToast('Error: '+(error.message.includes('unique')?`Code "${editCustForm.customer_code}" already in use`:error.message));
+    else { showToast('Customer updated ✓'); setEditCustomer(null); await fetchAll(); }
+    setSaving(false);
+  };
 
   const askDelete = (type, id, label, onConfirm) => setConfirmDelete({type,id,label,onConfirm});
 
@@ -225,8 +249,8 @@ export default function DashboardPage() {
   const addCustomer = async () => {
     if (!custForm.name) return; setSaving(true);
     const {error}=await supabase.from('customers').insert([custForm]);
-    if (error) showToast('Error: '+error.message);
-    else { showToast('Customer added ✓'); setCustForm({name:'',gstin:''}); await fetchAll(); }
+    if (error) showToast('Error: '+(error.message.includes('duplicate')||error.message.includes('unique')?`Customer code "${custForm.customer_code}" already exists`:error.message));
+    else { showToast('Customer added ✓'); setCustForm({customer_code:'',name:'',gstin:'',contact_name:'',phone:'',email:'',address:''}); await fetchAll(); }
     setSaving(false);
   };
 
@@ -1300,32 +1324,77 @@ export default function DashboardPage() {
         {/* ════ CUSTOMERS ════ */}
         {view==='customers'&&(<div>
           <div className="sec">Customer Master</div>
-          <div style={{...card,padding:18,marginBottom:16}}>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr auto',gap:14,alignItems:'flex-end'}}>
-              <div><label style={lbl}>Name</label><input style={inp} type="text" value={custForm.name} onChange={e=>setCustForm({...custForm,name:e.target.value})}/></div>
+          <div style={{...card,padding:20,marginBottom:16}}>
+            <div style={{fontSize:12,color:'#f59e0b',fontFamily:"'DM Mono',monospace",marginBottom:12}}>+ ADD CUSTOMER</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:10}}>
+              <div>
+                <label style={lbl}>Customer Code <span style={{color:'#475569',fontSize:10,textTransform:'none',letterSpacing:0}}>(unique ref)</span></label>
+                <input style={inp} type="text" placeholder="e.g. CUST-001 or ABC" value={custForm.customer_code} onChange={e=>setCustForm({...custForm,customer_code:e.target.value})}/>
+              </div>
+              <div><label style={lbl}>Customer Name *</label><input style={inp} type="text" value={custForm.name} onChange={e=>setCustForm({...custForm,name:e.target.value})}/></div>
               <div><label style={lbl}>GSTIN</label><input style={inp} type="text" value={custForm.gstin} onChange={e=>setCustForm({...custForm,gstin:e.target.value})}/></div>
-              <button onClick={addCustomer} disabled={saving} style={btn(saving)}>{saving?'Saving…':'ADD →'}</button>
+              <div><label style={lbl}>Contact Person</label><input style={inp} type="text" value={custForm.contact_name} onChange={e=>setCustForm({...custForm,contact_name:e.target.value})}/></div>
+              <div><label style={lbl}>Phone</label><input style={inp} type="text" value={custForm.phone} onChange={e=>setCustForm({...custForm,phone:e.target.value})}/></div>
+              <div><label style={lbl}>Email</label><input style={inp} type="email" value={custForm.email} onChange={e=>setCustForm({...custForm,email:e.target.value})}/></div>
+              <div><label style={lbl}>Address</label><input style={inp} type="text" value={custForm.address} onChange={e=>setCustForm({...custForm,address:e.target.value})}/></div>
+              <div style={{display:'flex',alignItems:'flex-end'}}><button onClick={addCustomer} disabled={saving} style={{...btn(saving),width:'100%',padding:'11px 0'}}>{saving?'Saving…':'ADD →'}</button></div>
             </div>
           </div>
-          <div style={{...card,overflow:'hidden'}}>
+          <div style={{...card,overflow:'auto'}}>
             <table>
-              <thead><tr>{['#','Name','GSTIN','POs','Net Sales','Profit','Margin','Pending','Status'].map(h=><th key={h}>{h}</th>)}</tr></thead>
-              <tbody>{customers.map((c,i)=>{ const a=analytics.perCustomer.find(x=>x.id===c.id); return (
+              <thead><tr>{['Code','Name','GSTIN','Contact','Phone','Email','POs','Net Sales','Profit','Margin','Pending','Status',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
+              <tbody>{customers.map((c)=>{ const a=analytics.perCustomer.find(x=>x.id===c.id); return (
                 <tr key={c.id}>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b'}}>{i+1}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#f59e0b',fontWeight:600}}>{c.customer_code||<span style={{color:'#334155',fontSize:10}}>no code</span>}</td>
                   <td style={{fontWeight:500}}>{c.name}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b',fontSize:10}}>{c.gstin||'—'}</td>
+                  <td style={{color:'#94a3b8',fontSize:11}}>{c.contact_name||'—'}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#94a3b8',fontSize:11}}>{c.phone||'—'}</td>
+                  <td style={{color:'#94a3b8',fontSize:11}}>{c.email||'—'}</td>
                   <td style={{fontFamily:"'DM Mono',monospace"}}>{pos.filter(p=>p.customer_id===c.id).length}</td>
                   <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtL(a?.netSales||0)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:(a?.profit||0)>=0?'#34d399':'#f87171'}}>{fmtL(a?.profit||0)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace"}}>{pct(a?.margin||0)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:(a?.pending||0)>0?'#f87171':'#34d399'}}>{fmtL(a?.pending||0)}</td>
                   <td>{a?.atRisk?<span className="chip" style={{background:'#450a0a',color:'#f87171',borderColor:'#7f1d1d'}}>⚠ RISK</span>:<span className="chip" style={{background:'#052e16',color:'#34d399',borderColor:'#14532d'}}>✓ OK</span>}</td>
+                  <td><button onClick={()=>openEditCustomer(c)} style={{background:'#1e293b',border:'1px solid #334155',color:'#f59e0b',borderRadius:6,padding:'4px 10px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}>✏ Edit</button></td>
                 </tr>
               );})}</tbody>
             </table>
           </div>
         </div>)}
+
+        {/* ── Customer Edit Modal ── */}
+        {editCustomer&&(
+          <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:20}} onClick={e=>{ if(e.target===e.currentTarget) setEditCustomer(null); }}>
+            <div style={{background:'#0f172a',border:'1px solid #334155',borderRadius:20,padding:28,width:'100%',maxWidth:640,boxShadow:'0 24px 64px rgba(0,0,0,0.7)'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+                <div>
+                  <div style={{fontFamily:"'DM Mono',monospace",color:'#f59e0b',fontSize:13}}>EDIT CUSTOMER</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",color:'#64748b',fontSize:11,marginTop:2}}>{editCustomer.name}</div>
+                </div>
+                <button onClick={()=>setEditCustomer(null)} style={{background:'transparent',border:'1px solid #334155',color:'#64748b',borderRadius:8,padding:'6px 12px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12}}>✕ Close</button>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
+                <div>
+                  <label style={lbl}>Customer Code</label>
+                  <input style={inp} type="text" placeholder="e.g. CUST-001" value={editCustForm.customer_code} onChange={e=>setEditCustForm({...editCustForm,customer_code:e.target.value})}/>
+                  <div style={{fontSize:10,color:'#475569',marginTop:3}}>Must be unique across all customers</div>
+                </div>
+                <div><label style={lbl}>Customer Name *</label><input style={inp} type="text" value={editCustForm.name} onChange={e=>setEditCustForm({...editCustForm,name:e.target.value})}/></div>
+                <div><label style={lbl}>GSTIN</label><input style={inp} type="text" value={editCustForm.gstin} onChange={e=>setEditCustForm({...editCustForm,gstin:e.target.value})}/></div>
+                <div><label style={lbl}>Contact Person</label><input style={inp} type="text" value={editCustForm.contact_name} onChange={e=>setEditCustForm({...editCustForm,contact_name:e.target.value})}/></div>
+                <div><label style={lbl}>Phone</label><input style={inp} type="text" value={editCustForm.phone} onChange={e=>setEditCustForm({...editCustForm,phone:e.target.value})}/></div>
+                <div><label style={lbl}>Email</label><input style={inp} type="email" value={editCustForm.email} onChange={e=>setEditCustForm({...editCustForm,email:e.target.value})}/></div>
+                <div style={{gridColumn:'1/-1'}}><label style={lbl}>Address</label><input style={inp} type="text" value={editCustForm.address} onChange={e=>setEditCustForm({...editCustForm,address:e.target.value})}/></div>
+              </div>
+              <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+                <button onClick={()=>setEditCustomer(null)} style={{background:'transparent',border:'1px solid #334155',color:'#64748b',borderRadius:8,padding:'10px 20px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12}}>Cancel</button>
+                <button onClick={saveEditCustomer} disabled={saving} style={{...btn(saving),padding:'10px 28px'}}>{saving?'Saving…':'SAVE CHANGES →'}</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ════ SIMULATOR ════ */}
         {view==='simulator'&&(<div>
