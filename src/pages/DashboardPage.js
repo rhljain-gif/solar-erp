@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/AuthContext';
 
+const VENDOR_TYPES = ['Manufacturer','Transporter','Installer','Service Provider','Other'];
+
 const fmt  = n => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n || 0);
 const fmtC = n => '₹' + fmt(n);
 const pct  = n => isFinite(n) && !isNaN(n) ? n.toFixed(1) + '%' : '—';
@@ -75,6 +77,8 @@ export default function DashboardPage() {
   const [pipeline,setPipeline] = useState([]);
   const [cashTxns,setCashTxns] = useState([]);
   const [bizExp,setBizExp]     = useState([]);
+  const [vendors,setVendors]   = useState([]);
+  const [deliveries,setDeliveries] = useState([]);
   const [settings,setSettings] = useState({default_purchase_price_exw:400000,default_purchase_price_ddp:403000,gst_rate_sales:12});
   const [loading,setLoading]   = useState(true);
   const [saving,setSaving]     = useState(false);
@@ -84,10 +88,12 @@ export default function DashboardPage() {
   const [expCatFilter,setExpCatFilter]   = useState('All');
 
   // Forms
-  const blankPO   = s => ({po_id:'',customer_id:'',delivery_type:'DDP',qty:'',unit_price:'',purchase_price:s.default_purchase_price_ddp,vendor_name:'Primary Manufacturer',vendor_invoice_no:'',purchase_date:'',advance:'',po_date:'',status:'PO Received',invoice_no:'',invoice_date:'',dispatch_date:''});
+  const blankPO = s => ({po_id:'',customer_id:'',delivery_type:'DDP',qty:'',unit_price:'',discount_pct:'0',discount_amount:'0',purchase_price:s.default_purchase_price_ddp,vendor_id:'',vendor_invoice_no:'',purchase_date:'',advance:'',po_date:'',status:'PO Received',invoice_no:'',invoice_date:'',dispatch_date:'',delivered_qty:'0'});
   const [poForm,setPoForm]       = useState(blankPO(settings));
-  const [cnForm,setCnForm]       = useState({po_id:'',type:'CNNote',amount:'',foc_units:'',cn_date:'',note:''});
+  const [cnForm,setCnForm]       = useState({po_id:'',type:'CNNote',amount:'',foc_units:'',discount_amount:'',cn_date:'',note:''});
   const [custForm,setCustForm]   = useState({name:'',gstin:''});
+  const [vendorForm,setVendorForm] = useState({name:'',vendor_type:'Manufacturer',gstin:'',contact_name:'',phone:'',email:'',address:'',notes:''});
+  const [deliveryForm,setDeliveryForm] = useState({po_id:'',delivery_date:'',qty_delivered:'',notes:''});
   const [sim,setSim]             = useState({customerId:'',extraCN:'',extraFOC:'',newPoQty:'',newPoUnitPrice:'',newPoPurchasePrice:'',newPoCNAmount:'',newPoFOCUnits:''});
   const [settingsForm,setSettingsForm] = useState({exw:'',ddp:'',gst_rate:''});
   const [mfrCNForm,setMfrCNForm] = useState({cn_ref:'',cn_date:'',total_value:'',description:''});
@@ -184,7 +190,7 @@ export default function DashboardPage() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const [r1,r2,r3,r4,r5,r6,r7,r8,r9,r10] = await Promise.all([
+    const [r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12] = await Promise.all([
       supabase.from('customers').select('*').order('id'),
       supabase.from('purchase_orders').select('*').order('created_at'),
       supabase.from('credit_notes').select('*').order('created_at'),
@@ -195,11 +201,14 @@ export default function DashboardPage() {
       supabase.from('pipeline_orders').select('*').order('expected_date'),
       supabase.from('cash_transactions').select('*').order('txn_date',{ascending:false}),
       supabase.from('business_expenses').select('*').order('expense_date',{ascending:false}),
+      supabase.from('vendors').select('*').order('name'),
+      supabase.from('delivery_entries').select('*').order('delivery_date',{ascending:false}),
     ]);
     setCust(r1.data||[]);  setPos(r2.data||[]);  setCns(r3.data||[]);
     setMfrCNs(r5.data||[]); setMfrExp(r6.data||[]);
     setTargets(r7.data||[]); setPipeline(r8.data||[]);
     setCashTxns(r9.data||[]); setBizExp(r10.data||[]);
+    setVendors(r11.data||[]); setDeliveries(r12.data||[]);
     if (r4.data) {
       const p={}; r4.data.forEach(r=>{ p[r.key]=Number(r.value); });
       setSettings(p);
@@ -221,10 +230,71 @@ export default function DashboardPage() {
     setSaving(false);
   };
 
+  const addVendor = async () => {
+    if (!vendorForm.name) { showToast('Enter vendor name'); return; }
+    setSaving(true);
+    const {error}=await supabase.from('vendors').insert([vendorForm]);
+    if (error) showToast('Error: '+error.message);
+    else { showToast('Vendor added ✓'); setVendorForm({name:'',vendor_type:'Manufacturer',gstin:'',contact_name:'',phone:'',email:'',address:'',notes:''}); await fetchAll(); }
+    setSaving(false);
+  };
+
+  const deleteVendor = async (id) => {
+    setSaving(true);
+    await supabase.from('vendors').delete().eq('id',id);
+    showToast('Vendor deleted'); await fetchAll(); setSaving(false);
+  };
+
+  const addDelivery = async () => {
+    if (!deliveryForm.po_id||!deliveryForm.delivery_date||!deliveryForm.qty_delivered) { showToast('Fill all required fields'); return; }
+    const po = pos.find(p=>p.id===deliveryForm.po_id);
+    const alreadyDelivered = deliveries.filter(d=>d.po_id===deliveryForm.po_id).reduce((s,d)=>s+d.qty_delivered,0);
+    const remaining = (po?.qty||0) - alreadyDelivered;
+    if (Number(deliveryForm.qty_delivered) > remaining) { showToast(`⛔ Cannot deliver ${deliveryForm.qty_delivered} — only ${remaining} units remaining`); return; }
+    setSaving(true);
+    const {error}=await supabase.from('delivery_entries').insert([{
+      po_id:deliveryForm.po_id, delivery_date:deliveryForm.delivery_date,
+      qty_delivered:Number(deliveryForm.qty_delivered), notes:deliveryForm.notes
+    }]);
+    // Update delivered_qty on PO
+    if (!error) {
+      const newDelivered = alreadyDelivered + Number(deliveryForm.qty_delivered);
+      await supabase.from('purchase_orders').update({
+        delivered_qty: newDelivered,
+        status: newDelivered >= (po?.qty||0) ? 'Delivered / Fulfilled' : po?.status
+      }).eq('id',deliveryForm.po_id);
+    }
+    if (error) showToast('Error: '+error.message);
+    else { showToast('Delivery logged ✓'); setDeliveryForm({po_id:'',delivery_date:'',qty_delivered:'',notes:''}); await fetchAll(); }
+    setSaving(false);
+  };
+
+  const deleteDelivery = async (id, po_id, qty) => {
+    setSaving(true);
+    await supabase.from('delivery_entries').delete().eq('id',id);
+    // Recalculate delivered_qty
+    const remaining = deliveries.filter(d=>d.id!==id&&d.po_id===po_id).reduce((s,d)=>s+d.qty_delivered,0);
+    await supabase.from('purchase_orders').update({delivered_qty:remaining}).eq('id',po_id);
+    showToast('Delivery entry deleted'); await fetchAll(); setSaving(false);
+  };
+
   const addPO = async () => {
     if (!poForm.po_id||!poForm.customer_id||!poForm.qty||!poForm.unit_price||!poForm.purchase_price||!poForm.advance||!poForm.po_date) { showToast('Fill all required fields including PO Number'); return; }
     setSaving(true);
-    const {error}=await supabase.from('purchase_orders').insert([{id:poForm.po_id.trim(),customer_id:Number(poForm.customer_id),delivery_type:poForm.delivery_type,qty:Number(poForm.qty),unit_price:Number(poForm.unit_price),purchase_price:Number(poForm.purchase_price),vendor_name:poForm.vendor_name||'Primary Manufacturer',vendor_invoice_no:poForm.vendor_invoice_no,purchase_date:poForm.purchase_date||null,advance:Number(poForm.advance),po_date:poForm.po_date,status:poForm.status,invoice_no:poForm.invoice_no||null,invoice_date:poForm.invoice_date||null,dispatch_date:poForm.dispatch_date||null}]);
+    const discAmt = Number(poForm.discount_amount||0);
+    const discPct = Number(poForm.discount_pct||0);
+    const vendor = vendors.find(v=>v.id===Number(poForm.vendor_id));
+    const {error}=await supabase.from('purchase_orders').insert([{
+      id:poForm.po_id.trim(), customer_id:Number(poForm.customer_id),
+      delivery_type:poForm.delivery_type, qty:Number(poForm.qty),
+      unit_price:Number(poForm.unit_price), discount_amount:discAmt, discount_pct:discPct,
+      purchase_price:Number(poForm.purchase_price),
+      vendor_name:vendor?.name||poForm.vendor_name||'Primary Manufacturer',
+      vendor_invoice_no:poForm.vendor_invoice_no, purchase_date:poForm.purchase_date||null,
+      advance:Number(poForm.advance), po_date:poForm.po_date, status:poForm.status,
+      invoice_no:poForm.invoice_no||null, invoice_date:poForm.invoice_date||null,
+      dispatch_date:poForm.dispatch_date||null, delivered_qty:0
+    }]);
     if (error) showToast('Error: '+(error.message.includes('duplicate')?`PO Number "${poForm.po_id}" already exists`:error.message));
     else { showToast('PO added ✓'); setPoForm(blankPO(settings)); await fetchAll(); }
     setSaving(false);
@@ -507,8 +577,10 @@ export default function DashboardPage() {
     {key:'expenses', label:'💸 Expenses'},
     {key:'unfulfilled',label:'⏳ Pending'},
     {key:'pos',      label:'📋 Orders'},
+    {key:'deliveries',label:'🚚 Deliveries'},
     {key:'cns',      label:'🔖 CN/FOC'},
     {key:'customers',label:'👤 Customers'},
+    {key:'vendors',  label:'🏪 Vendors'},
     {key:'simulator',label:'🔮 Simulator'},
     {key:'mfrcn',    label:'🏭 Mfr. CNs'},
     {key:'settings', label:'⚙️ Settings'},
@@ -1012,12 +1084,31 @@ export default function DashboardPage() {
               <div><label style={lbl}>Customer *</label><select style={inp} value={poForm.customer_id} onChange={e=>setPoForm({...poForm,customer_id:e.target.value})}><option value="">Select…</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
               <div><label style={lbl}>Delivery *</label><select style={inp} value={poForm.delivery_type} onChange={e=>{ const def=e.target.value==='DDP'?settings.default_purchase_price_ddp:settings.default_purchase_price_exw; setPoForm({...poForm,delivery_type:e.target.value,purchase_price:def}); }}><option value="DDP">DDP</option><option value="EXW">EXW</option></select></div>
               <div><label style={lbl}>Qty *</label><input style={inp} type="number" value={poForm.qty} onChange={e=>setPoForm({...poForm,qty:e.target.value})}/></div>
-              <div><label style={lbl}>Unit Sell Price (₹) *</label><input style={inp} type="number" value={poForm.unit_price} onChange={e=>setPoForm({...poForm,unit_price:e.target.value})}/></div>
+              <div><label style={lbl}>Unit Price (₹) *</label><input style={inp} type="number" value={poForm.unit_price} onChange={e=>{ const up=Number(e.target.value); const da=poForm.discount_pct>0?parseFloat((up*poForm.qty*poForm.discount_pct/100).toFixed(2)):poForm.discount_amount; setPoForm({...poForm,unit_price:e.target.value,discount_amount:da}); }}/></div>
+              <div><label style={lbl}>Discount %</label><input style={inp} type="number" min="0" max="100" placeholder="0" value={poForm.discount_pct} onChange={e=>{ const dp=Number(e.target.value); const da=parseFloat((Number(poForm.unit_price)*Number(poForm.qty)*dp/100).toFixed(2)); setPoForm({...poForm,discount_pct:e.target.value,discount_amount:da}); }}/></div>
+              <div><label style={lbl}>Discount Amt (₹)</label><input style={inp} type="number" placeholder="0" value={poForm.discount_amount} onChange={e=>{ const da=Number(e.target.value); const base=Number(poForm.unit_price)*Number(poForm.qty); const dp=base>0?parseFloat((da/base*100).toFixed(2)):0; setPoForm({...poForm,discount_amount:e.target.value,discount_pct:dp}); }}/></div>
             </div>
+            {/* Live invoice preview */}
+            {poForm.qty&&poForm.unit_price&&(()=>{
+              const gross=Number(poForm.qty)*Number(poForm.unit_price);
+              const disc=Number(poForm.discount_amount||0);
+              const netTax=gross-disc;
+              const gstAmt=netTax*(settings.gst_rate_sales||12)/100;
+              const invTotal=netTax+gstAmt;
+              const profitGross=netTax-Number(poForm.qty)*Number(poForm.purchase_price||0);
+              return <div style={{background:'#0a0e1a',border:'1px solid #334155',borderRadius:10,padding:'10px 16px',marginBottom:12,display:'flex',gap:20,flexWrap:'wrap',fontSize:12,fontFamily:"'DM Mono',monospace"}}>
+                <span style={{color:'#64748b'}}>Taxable: <strong style={{color:'#e2e8f0'}}>{fmtL(gross)}</strong></span>
+                {disc>0&&<span style={{color:'#64748b'}}>Discount: <strong style={{color:'#f87171'}}>−{fmtL(disc)}</strong></span>}
+                {disc>0&&<span style={{color:'#64748b'}}>Net Taxable: <strong style={{color:'#f59e0b'}}>{fmtL(netTax)}</strong></span>}
+                <span style={{color:'#64748b'}}>GST ({settings.gst_rate_sales||12}%): <strong style={{color:'#a78bfa'}}>{fmtL(gstAmt)}</strong></span>
+                <span style={{color:'#64748b'}}>Invoice Total: <strong style={{color:'#38bdf8'}}>{fmtL(invTotal)}</strong></span>
+                {poForm.purchase_price&&<span style={{color:'#64748b'}}>Gross Profit: <strong style={{color:profitGross>=0?'#34d399':'#f87171'}}>{fmtL(profitGross)}</strong></span>}
+              </div>;
+            })()}
             <div style={{background:'#0a0e1a',border:'1px solid #334155',borderRadius:10,padding:12,marginBottom:12}}>
               <div style={{fontSize:10,color:'#6366f1',fontFamily:"'DM Mono',monospace",marginBottom:10}}>VENDOR / PURCHASE</div>
               <div style={{...g4}}>
-                <div><label style={lbl}>Vendor</label><input style={inp} type="text" value={poForm.vendor_name} onChange={e=>setPoForm({...poForm,vendor_name:e.target.value})}/></div>
+                <div><label style={lbl}>Vendor</label><select style={inp} value={poForm.vendor_id} onChange={e=>setPoForm({...poForm,vendor_id:e.target.value})}><option value="">Select vendor…</option>{vendors.map(v=><option key={v.id} value={v.id}>{v.name} ({v.vendor_type})</option>)}</select></div>
                 <div><label style={lbl}>Purchase Price (₹) *</label><input style={{...inp,borderColor:Number(poForm.purchase_price)!==(poForm.delivery_type==='DDP'?settings.default_purchase_price_ddp:settings.default_purchase_price_exw)&&poForm.purchase_price?'#6366f1':'#334155'}} type="number" value={poForm.purchase_price} onChange={e=>setPoForm({...poForm,purchase_price:e.target.value})}/></div>
                 <div><label style={lbl}>Vendor Invoice</label><input style={inp} type="text" value={poForm.vendor_invoice_no} onChange={e=>setPoForm({...poForm,vendor_invoice_no:e.target.value})}/></div>
                 <div><label style={lbl}>Purchase Date</label><input style={inp} type="date" value={poForm.purchase_date} onChange={e=>setPoForm({...poForm,purchase_date:e.target.value})}/></div>
@@ -1032,33 +1123,38 @@ export default function DashboardPage() {
           </div>
           <div style={{...card,overflow:'auto'}}>
             <table>
-              <thead><tr>{['PO No','Customer','Type','Buy Price','Qty','Sell Price','Advance','Balance','Date','Stage','Edit','Status'].map(h=><th key={h}>{h}</th>)}</tr></thead>
-              <tbody>{pos.map(p=>{ const cust=customers.find(c=>c.id===p.customer_id),gross=p.qty*p.unit_price,bal=Math.max(0,gross-p.advance); return (
+              <thead><tr>{['PO No','Customer','Type','Vendor','Qty','Ordered','Discount','Net Taxable','GST','Invoice Total','Advance','Bal Due','Delivered','Bal Qty','Date','Stage','Edit','Status'].map(h=><th key={h}>{h}</th>)}</tr></thead>
+              <tbody>{pos.map(p=>{ 
+                const cust=customers.find(c=>c.id===p.customer_id);
+                const gross=p.qty*p.unit_price;
+                const disc=Number(p.discount_amount||0);
+                const netTax=gross-disc;
+                const gstAmt=netTax*(settings.gst_rate_sales||12)/100;
+                const invTotal=netTax+gstAmt;
+                const bal=Math.max(0,invTotal-p.advance);
+                const poDeliveries=deliveries.filter(d=>d.po_id===p.id);
+                const deliveredQty=poDeliveries.reduce((s,d)=>s+d.qty_delivered,0);
+                const balQty=p.qty-deliveredQty;
+                return (
                 <tr key={p.id}>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#f59e0b',whiteSpace:'nowrap'}}>{p.id}</td>
                   <td style={{fontWeight:500}}>{cust?.name||'—'}</td>
                   <td><span style={{fontSize:10,background:p.delivery_type==='DDP'?'#1e3a5f':'#1e3a2f',color:p.delivery_type==='DDP'?'#38bdf8':'#34d399',borderRadius:4,padding:'2px 5px',fontFamily:"'DM Mono',monospace"}}>{p.delivery_type}</span></td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#94a3b8'}}>
-                    <input style={{...inp,width:110,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace"}}
-                      type="number" defaultValue={p.purchase_price}
-                      onBlur={e=>{ if(Number(e.target.value)!==Number(p.purchase_price)) updatePOField(p.id,'purchase_price',e.target.value); }}/>
-                  </td>
+                  <td style={{color:'#94a3b8',fontSize:11,whiteSpace:'nowrap'}}>{p.vendor_name||'—'}</td>
                   <td style={{fontFamily:"'DM Mono',monospace"}}>
-                    <input style={{...inp,width:70,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace"}}
-                      type="number" defaultValue={p.qty}
-                      onBlur={e=>{ if(Number(e.target.value)!==Number(p.qty)) updatePOField(p.id,'qty',e.target.value); }}/>
+                    <input style={{...inp,width:70,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace"}} type="number" defaultValue={p.qty} onBlur={e=>{ if(Number(e.target.value)!==Number(p.qty)) updatePOField(p.id,'qty',e.target.value); }}/>
                   </td>
-                  <td style={{fontFamily:"'DM Mono',monospace"}}>
-                    <input style={{...inp,width:110,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace"}}
-                      type="number" defaultValue={p.unit_price}
-                      onBlur={e=>{ if(Number(e.target.value)!==Number(p.unit_price)) updatePOField(p.id,'unit_price',e.target.value); }}/>
-                  </td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#94a3b8'}}>{fmtL(gross)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#f87171'}}>{disc>0?`−${fmtL(disc)}`:'—'}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#f59e0b',fontWeight:600}}>{fmtL(netTax)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#a78bfa'}}>{fmtL(gstAmt)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#38bdf8',fontWeight:600}}>{fmtL(invTotal)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#34d399'}}>
-                    <input style={{...inp,width:110,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace",color:'#34d399'}}
-                      type="number" defaultValue={p.advance}
-                      onBlur={e=>{ if(Number(e.target.value)!==Number(p.advance)) updatePOField(p.id,'advance',e.target.value); }}/>
+                    <input style={{...inp,width:110,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace",color:'#34d399'}} type="number" defaultValue={p.advance} onBlur={e=>{ if(Number(e.target.value)!==Number(p.advance)) updatePOField(p.id,'advance',e.target.value); }}/>
                   </td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:bal>0?'#f87171':'#34d399',fontWeight:600}}>{fmtL(bal)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#34d399'}}>{deliveredQty}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:balQty>0?'#fb923c':'#34d399',fontWeight:600}}>{balQty}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b',fontSize:10}}>{p.po_date}</td>
                   <td><StatusBadge s={p.status}/></td>
                   <td>
@@ -1336,6 +1432,127 @@ export default function DashboardPage() {
               )}
             </div>
           ))}
+        </div>)}
+
+        {/* ════ VENDORS ════ */}
+        {view==='vendors'&&(<div>
+          <div className="sec">Vendor Master</div>
+          <div style={{...card,padding:20,marginBottom:16}}>
+            <div style={{fontSize:12,color:'#f59e0b',fontFamily:"'DM Mono',monospace",marginBottom:12}}>+ ADD VENDOR</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:10}}>
+              <div><label style={lbl}>Vendor Name *</label><input style={inp} type="text" placeholder="Company name" value={vendorForm.name} onChange={e=>setVendorForm({...vendorForm,name:e.target.value})}/></div>
+              <div><label style={lbl}>Type *</label><select style={inp} value={vendorForm.vendor_type} onChange={e=>setVendorForm({...vendorForm,vendor_type:e.target.value})}>{VENDOR_TYPES.map(t=><option key={t}>{t}</option>)}</select></div>
+              <div><label style={lbl}>GSTIN</label><input style={inp} type="text" value={vendorForm.gstin} onChange={e=>setVendorForm({...vendorForm,gstin:e.target.value})}/></div>
+              <div><label style={lbl}>Contact Person</label><input style={inp} type="text" value={vendorForm.contact_name} onChange={e=>setVendorForm({...vendorForm,contact_name:e.target.value})}/></div>
+              <div><label style={lbl}>Phone</label><input style={inp} type="text" value={vendorForm.phone} onChange={e=>setVendorForm({...vendorForm,phone:e.target.value})}/></div>
+              <div><label style={lbl}>Email</label><input style={inp} type="email" value={vendorForm.email} onChange={e=>setVendorForm({...vendorForm,email:e.target.value})}/></div>
+              <div><label style={lbl}>Address</label><input style={inp} type="text" value={vendorForm.address} onChange={e=>setVendorForm({...vendorForm,address:e.target.value})}/></div>
+              <div style={{display:'flex',alignItems:'flex-end'}}><button onClick={addVendor} disabled={saving} style={{...btn(saving),width:'100%',padding:'11px 0'}}>{saving?'Saving…':'ADD →'}</button></div>
+            </div>
+          </div>
+          {VENDOR_TYPES.map(type=>{
+            const typeVendors=vendors.filter(v=>v.vendor_type===type);
+            if (!typeVendors.length) return null;
+            const typeColors={'Manufacturer':'#34d399','Transporter':'#38bdf8','Installer':'#a78bfa','Service Provider':'#f59e0b','Other':'#64748b'};
+            return <div key={type} style={{marginBottom:16}}>
+              <div style={{fontSize:11,color:typeColors[type],fontFamily:"'DM Mono',monospace",marginBottom:8,display:'flex',alignItems:'center',gap:6}}><div style={{width:8,height:8,borderRadius:'50%',background:typeColors[type]}}/>{type.toUpperCase()} ({typeVendors.length})</div>
+              <div style={{...card,overflow:'auto'}}>
+                <table>
+                  <thead><tr>{['Name','GSTIN','Contact','Phone','Email','Address','POs',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
+                  <tbody>{typeVendors.map(v=>{
+                    const vPOs=pos.filter(p=>p.vendor_name===v.name).length;
+                    return <tr key={v.id}>
+                      <td style={{fontWeight:500,color:typeColors[type]}}>{v.name}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b',fontSize:10}}>{v.gstin||'—'}</td>
+                      <td style={{color:'#94a3b8'}}>{v.contact_name||'—'}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#94a3b8',fontSize:11}}>{v.phone||'—'}</td>
+                      <td style={{color:'#94a3b8',fontSize:11}}>{v.email||'—'}</td>
+                      <td style={{color:'#94a3b8',fontSize:11,maxWidth:160}}>{v.address||'—'}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#f59e0b'}}>{vPOs}</td>
+                      <td><button onClick={()=>askDelete('vendor',v.id,`Vendor: ${v.name}`,()=>deleteVendor(v.id))} style={{background:'#1e293b',border:'1px solid #334155',color:'#f87171',borderRadius:6,padding:'4px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
+                    </tr>;
+                  })}</tbody>
+                </table>
+              </div>
+            </div>;
+          })}
+          {vendors.length===0&&<div style={{color:'#475569',fontSize:13,padding:20,textAlign:'center'}}>No vendors added yet. Add your first vendor above.</div>}
+        </div>)}
+
+        {/* ════ DELIVERIES ════ */}
+        {view==='deliveries'&&(<div>
+          <div className="sec">Delivery Tracker</div>
+          {/* Summary KPIs */}
+          {(()=>{
+            const openPOs=pos.filter(p=>p.status!=='Delivered / Fulfilled');
+            const totalOrdered=openPOs.reduce((s,p)=>s+p.qty,0);
+            const totalDelivered=openPOs.reduce((s,p)=>s+deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0),0);
+            const totalPending=totalOrdered-totalDelivered;
+            const partialPOs=openPOs.filter(p=>{ const d=deliveries.filter(x=>x.po_id===p.id).reduce((s,x)=>s+x.qty_delivered,0); return d>0&&d<p.qty; });
+            return <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
+              <KPICard label="Open POs" val={openPOs.length} color="#f59e0b"/>
+              <KPICard label="Total Units Ordered" val={fmt(totalOrdered)} color="#38bdf8"/>
+              <KPICard label="Units Delivered" val={fmt(totalDelivered)} color="#34d399"/>
+              <KPICard label="Units Pending" val={fmt(totalPending)} sub={`${partialPOs.length} POs partially delivered`} color={totalPending>0?'#fb923c':'#34d399'}/>
+            </div>;
+          })()}
+
+          {/* Log delivery form */}
+          <div style={{...card,padding:18,marginBottom:18}}>
+            <div style={{fontSize:12,color:'#34d399',fontFamily:"'DM Mono',monospace",marginBottom:12}}>+ LOG DELIVERY</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,alignItems:'flex-end'}}>
+              <div><label style={lbl}>PO *</label>
+                <select style={inp} value={deliveryForm.po_id} onChange={e=>setDeliveryForm({...deliveryForm,po_id:e.target.value})}>
+                  <option value="">Select open PO…</option>
+                  {pos.filter(p=>p.status!=='Delivered / Fulfilled').map(p=>{
+                    const cust=customers.find(c=>c.id===p.customer_id);
+                    const delivered=deliveries.filter(d=>d.po_id===p.id).reduce((s,d)=>s+d.qty_delivered,0);
+                    const rem=p.qty-delivered;
+                    return <option key={p.id} value={p.id}>{p.id} — {cust?.name} ({rem} remaining)</option>;
+                  })}
+                </select>
+              </div>
+              <div><label style={lbl}>Delivery Date *</label><input style={inp} type="date" value={deliveryForm.delivery_date} onChange={e=>setDeliveryForm({...deliveryForm,delivery_date:e.target.value})}/></div>
+              <div><label style={lbl}>Qty Delivered *</label><input style={inp} type="number" min="1" value={deliveryForm.qty_delivered} onChange={e=>setDeliveryForm({...deliveryForm,qty_delivered:e.target.value})}/></div>
+              <div><label style={lbl}>Notes</label><input style={inp} type="text" value={deliveryForm.notes} onChange={e=>setDeliveryForm({...deliveryForm,notes:e.target.value})}/></div>
+              <div style={{gridColumn:'1/-1',display:'flex',justifyContent:'flex-end'}}>
+                <button onClick={addDelivery} disabled={saving} style={{...btn(saving,'#34d399','#0a0e1a'),padding:'10px 28px'}}>{saving?'Saving…':'LOG DELIVERY →'}</button>
+              </div>
+            </div>
+          </div>
+
+          {/* Per-PO delivery status */}
+          <div className="sec">Delivery Status by PO</div>
+          {pos.filter(p=>{ const d=deliveries.filter(x=>x.po_id===p.id); return d.length>0||p.status!=='Delivered / Fulfilled'; }).map(p=>{
+            const cust=customers.find(c=>c.id===p.customer_id);
+            const poDeliveries=deliveries.filter(d=>d.po_id===p.id).sort((a,b)=>a.delivery_date>b.delivery_date?-1:1);
+            const delivered=poDeliveries.reduce((s,d)=>s+d.qty_delivered,0);
+            const rem=p.qty-delivered;
+            const pct2=p.qty>0?Math.min(100,(delivered/p.qty)*100):0;
+            return <div key={p.id} style={{...card,marginBottom:10,padding:16}}>
+              <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:10}}>
+                <div style={{fontFamily:"'DM Mono',monospace",color:'#f59e0b',fontWeight:600}}>{p.id}</div>
+                <div style={{fontWeight:500}}>{cust?.name||'—'}</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#64748b'}}>Ordered: <strong style={{color:'#e2e8f0'}}>{p.qty}</strong></div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#64748b'}}>Delivered: <strong style={{color:'#34d399'}}>{delivered}</strong></div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#64748b'}}>Balance: <strong style={{color:rem>0?'#fb923c':'#34d399'}}>{rem}</strong></div>
+                <div style={{flex:1,height:6,background:'#1e293b',borderRadius:3,overflow:'hidden',marginLeft:8}}>
+                  <div style={{height:'100%',width:`${pct2}%`,background:pct2>=100?'#34d399':'#f59e0b',borderRadius:3,transition:'width .3s'}}/>
+                </div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:pct2>=100?'#34d399':'#f59e0b'}}>{Math.round(pct2)}%</div>
+              </div>
+              {poDeliveries.length>0&&<table style={{marginTop:4}}>
+                <thead><tr>{['Delivery Date','Qty','Notes',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
+                <tbody>{poDeliveries.map(d=><tr key={d.id}>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b'}}>{d.delivery_date}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#34d399',fontWeight:600}}>{d.qty_delivered}</td>
+                  <td style={{color:'#94a3b8',fontSize:11}}>{d.notes||'—'}</td>
+                  <td><button onClick={()=>askDelete('delivery',d.id,`Delivery of ${d.qty_delivered} units on ${d.delivery_date}`,()=>deleteDelivery(d.id,d.po_id,d.qty_delivered))} style={{background:'#1e293b',border:'1px solid #334155',color:'#f87171',borderRadius:6,padding:'3px 7px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
+                </tr>)}</tbody>
+              </table>}
+              {poDeliveries.length===0&&<div style={{fontSize:11,color:'#475569'}}>No deliveries logged yet.</div>}
+            </div>;
+          })}
         </div>)}
 
         {/* ════ SETTINGS ════ */}
