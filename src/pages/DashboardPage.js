@@ -844,11 +844,13 @@ export default function DashboardPage() {
   // ── PO Invoices CRUD ─────────────────────────────────────────────────────
   const addPOInvoice = async (poId) => {
     const f = invoiceForm;
-    if (!f.invoice_no||!f.invoice_date||!f.qty||!f.unit_price) {
+    const po = pos.find(p=>p.id===poId);
+    // B10 fix: unit_price field shows po.unit_price as placeholder but may be empty in state
+    const effectiveUnitPrice = f.unit_price !== '' ? Number(f.unit_price) : Number(po?.unit_price||0);
+    if (!f.invoice_no||!f.invoice_date||!f.qty||!effectiveUnitPrice) {
       showToast('Fill invoice no, date, qty and unit price','error'); return;
     }
     // Validate qty doesn't exceed remaining unbilled
-    const po = pos.find(p=>p.id===poId);
     const alreadyBilled = poInvoices.filter(i=>i.po_id===poId).reduce((s,i)=>s+i.qty,0);
     const remaining = (po?.qty||0) - alreadyBilled;
     if (Number(f.qty) > remaining) {
@@ -860,7 +862,7 @@ export default function DashboardPage() {
       invoice_no: f.invoice_no.trim(),
       invoice_date: f.invoice_date,
       qty: Number(f.qty),
-      unit_price: Number(f.unit_price),
+      unit_price: effectiveUnitPrice,
       discount_amount: Number(f.discount_amount||0),
       gst_rate: Number(f.gst_rate||po?.gst_rate||12),
       notes: f.notes||null
@@ -956,7 +958,7 @@ export default function DashboardPage() {
       invoicedQty, billedQty, unbilledQty, invoicedNetTax, invoicedGst,
       invoicedAmt, advance, balanceDue, invRows
     };
-  }, [deliveries, poInvoices, settings]);
+  }, [deliveries, poInvoices, settings, pos]);
 
 
   const analytics = useMemo(()=>{
