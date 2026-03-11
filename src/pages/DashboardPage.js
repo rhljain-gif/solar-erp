@@ -79,6 +79,47 @@ const BarChart = ({data,valueKey,labelKey,color='#b8924a',height=80}) => {
 // Category colour dots
 const catColor = cat => ({'Salary':'#2d7fa8','Rent':'#6a5a9a','Travel':'#c87030','Professional Fees':'#b8924a','Utilities':'#2d8a5e','Marketing':'#a040b0','Logistics':'#3a8a5a','Insurance':'#7a6e64','Office Supplies':'#2d8fa8','Other':'#8a7e72'}[cat]||'#8a7e72');
 
+
+// Reusable searchable customer picker
+const SearchableCustSelect = ({customers, value, onChange, placeholder='Select customer…', inputStyle}) => {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const selected = customers.find(c=>String(c.id)===String(value));
+  const filtered = customers.filter(c=>{
+    if(!q) return true;
+    const s=q.toLowerCase();
+    return c.name?.toLowerCase().includes(s)||c.customer_code?.toLowerCase().includes(s)||c.gstin?.toLowerCase().includes(s);
+  });
+  return (
+    <div style={{position:'relative'}}>
+      <div style={{...inputStyle,display:'flex',alignItems:'center',justifyContent:'space-between',cursor:'pointer',userSelect:'none'}}
+        onClick={()=>setOpen(o=>!o)}>
+        <span style={{color:selected?'#2c2520':'#a09689',fontSize:12}}>{selected?selected.name:placeholder}</span>
+        <span style={{color:'#a09689',fontSize:10}}>▾</span>
+      </div>
+      {open&&(
+        <div style={{position:'absolute',top:'100%',left:0,right:0,background:'#fff8f0',border:'1px solid #b8924a',borderRadius:4,zIndex:500,boxShadow:'0 8px 24px rgba(120,90,50,.15)',maxHeight:220,overflow:'hidden',display:'flex',flexDirection:'column'}}>
+          <input autoFocus style={{border:'none',borderBottom:'1px solid #e0d8cc',padding:'8px 12px',fontSize:12,background:'#fdf6ec',outline:'none',fontFamily:"'Noto Sans JP',sans-serif",color:'#2c2520'}}
+            placeholder="Type to search…" value={q} onChange={e=>setQ(e.target.value)} onClick={e=>e.stopPropagation()}/>
+          <div style={{overflowY:'auto',maxHeight:160}}>
+            <div style={{padding:'6px 12px',fontSize:11,color:'#a09689',cursor:'pointer'}} onClick={()=>{onChange('');setQ('');setOpen(false);}}>— Clear selection —</div>
+            {filtered.length===0&&<div style={{padding:'8px 12px',fontSize:11,color:'#a09689'}}>No customers found</div>}
+            {filtered.map(c=><div key={c.id}
+              style={{padding:'7px 12px',fontSize:12,cursor:'pointer',background:String(c.id)===String(value)?'#fdf6ec':'transparent',color:'#2c2520',borderBottom:'1px solid #e0d8cc30'}}
+              onMouseEnter={e=>e.currentTarget.style.background='#fdf6ec'}
+              onMouseLeave={e=>e.currentTarget.style.background=String(c.id)===String(value)?'#fdf6ec':'transparent'}
+              onClick={()=>{onChange(String(c.id));setQ('');setOpen(false);}}>
+              {c.customer_code&&<span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#b8924a',marginRight:6}}>[{c.customer_code}]</span>}
+              {c.name}
+              {c.gstin&&<span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',marginLeft:6}}>{c.gstin}</span>}
+            </div>)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default function DashboardPage() {
   const { user, signOut } = useAuth();
   const [view,setView]         = useState('dashboard');
@@ -101,15 +142,39 @@ export default function DashboardPage() {
   const [loading,setLoading]   = useState(true);
   const [saving,setSaving]     = useState(false);
   const [toast,setToast]       = useState('');
-  const [selectedFY,setFY]     = useState('FY 2024-25');
+  // B4 fix: default to actual current Indian FY
+  const currentFY = (() => {
+    const now = new Date();
+    const yr = now.getFullYear();
+    const month = now.getMonth()+1; // 1-12
+    return month >= 4 ? `FY ${yr}-${String(yr+1).slice(2)}` : `FY ${yr-1}-${String(yr).slice(2)}`;
+  })();
+  const [selectedFY,setFY]     = useState(currentFY);
   const [expandedMfrCN,setExpandedMfrCN] = useState(null);
   const [expCatFilter,setExpCatFilter]   = useState('All');
   const [searchPO,setSearchPO]           = useState('');
   const [searchCust,setSearchCust]       = useState('');
   const [searchVendor,setSearchVendor]   = useState('');
+  const [searchCN,setSearchCN]           = useState('');
+  const [searchPipe,setSearchPipe]       = useState('');
+  const [drillDown,setDrillDown]         = useState(null); // {type, data}
+  const [toastType,setToastType]         = useState('ok'); // 'ok' | 'error'
+  // Edit modals for PI, Pipeline, Receipt
+  const [editPI,setEditPI]               = useState(null);
+  const [editPIForm,setEditPIForm]       = useState({});
+  const [editPipe,setEditPipe]           = useState(null);
+  const [editPipeForm,setEditPipeForm]   = useState({});
+  const [editReceipt,setEditReceipt]     = useState(null);
+  const [editReceiptForm,setEditReceiptForm] = useState({});
+  // Searchable customer dropdown state
+  const [custSearch,setCustSearch]       = useState('');
+  const [custSearchEdit,setCustSearchEdit] = useState('');
+  const [showCustDrop,setShowCustDrop]   = useState(false);
+  const [showCustDropEdit,setShowCustDropEdit] = useState(false);
+  const [cnCustFilter,setCnCustFilter]   = useState('');
 
   // Forms
-  const blankPO = s => ({po_id:'',customer_id:'',delivery_type:'DDP',qty:'',unit_price:'',discount_pct:'0',discount_amount:'0',purchase_price:s.default_purchase_price_ddp,vendor_id:'',vendor_invoice_no:'',purchase_date:'',advance:'',po_date:'',status:'PO Received',invoice_no:'',invoice_date:'',dispatch_date:'',delivered_qty:'0'});
+  const blankPO = s => ({po_id:'',customer_id:'',delivery_type:'DDP',qty:'',unit_price:'',discount_pct:'0',discount_amount:'0',purchase_price:s.default_purchase_price_ddp,gst_rate:String(s.gst_rate_sales||12),vendor_id:'',vendor_invoice_no:'',purchase_date:'',advance:'',po_date:'',status:'PO Received',invoice_no:'',invoice_date:'',dispatch_date:'',delivered_qty:'0'});
   const [poForm,setPoForm]       = useState(blankPO(settings));
   const [cnForm,setCnForm]       = useState({po_id:'',type:'CNNote',amount:'',foc_units:'',discount_amount:'',cn_date:'',note:''});
   const [custForm,setCustForm]   = useState({customer_code:'',name:'',gstin:'',contact_name:'',phone:'',email:'',address:''});
@@ -150,7 +215,7 @@ export default function DashboardPage() {
     if (!editCustForm.name) { showToast('Customer name is required'); return; }
     setSaving(true);
     const {error}=await supabase.from('customers').update(editCustForm).eq('id',editCustomer.id);
-    if (error) showToast('Error: '+(error.message.includes('unique')?`Code "${editCustForm.customer_code}" already in use`:error.message));
+    if (error) showToast('Error: '+(error.message.includes('unique')?`Code "${editCustForm.customer_code}" already in use`:error.message), 'error');
     else { showToast('Customer updated ✓'); setEditCustomer(null); await fetchAll(); }
     setSaving(false);
   };
@@ -175,6 +240,33 @@ export default function DashboardPage() {
     setSaving(true);
     await supabase.from('business_expenses').delete().eq('id',id);
     showToast('Expense deleted'); await fetchAll(); setSaving(false);
+  };
+
+  const openEditPipe = p => {
+    setEditPipeForm({
+      customer_id:String(p.customer_id), expected_qty:String(p.expected_qty),
+      expected_value:String(p.expected_value||''), expected_date:p.expected_date||'',
+      delivery_type:p.delivery_type||'DDP', probability:String(p.probability),
+      notes:p.notes||'', status:p.status
+    });
+    setEditPipe(p);
+  };
+
+  const saveEditPipe = async () => {
+    if (!editPipeForm.customer_id||!editPipeForm.expected_qty) { showToast('Fill required fields','error'); return; }
+    setSaving(true);
+    const {error}=await supabase.from('pipeline_orders').update({
+      customer_id:Number(editPipeForm.customer_id),
+      expected_qty:Number(editPipeForm.expected_qty),
+      expected_value:Number(editPipeForm.expected_value||0),
+      expected_date:editPipeForm.expected_date||null,
+      delivery_type:editPipeForm.delivery_type,
+      probability:Number(editPipeForm.probability),
+      notes:editPipeForm.notes, status:editPipeForm.status
+    }).eq('id',editPipe.id);
+    if (error) showToast('Error: '+error.message,'error');
+    else { showToast('Pipeline entry updated ✓'); setEditPipe(null); await fetchAll(); }
+    setSaving(false);
   };
 
   const deletePipeline = async (id) => {
@@ -211,6 +303,7 @@ export default function DashboardPage() {
       purchase_date:p.purchase_date||'', advance:String(p.advance),
       po_date:p.po_date||'', status:p.status,
       invoice_no:p.invoice_no||'', invoice_date:p.invoice_date||'', dispatch_date:p.dispatch_date||'',
+      gst_rate:String(p.gst_rate??settings.gst_rate_sales??12),
     });
     setEditPO(p);
   };
@@ -228,13 +321,17 @@ export default function DashboardPage() {
       advance:Number(editForm.advance), po_date:editForm.po_date, status:editForm.status,
       invoice_no:editForm.invoice_no||null, invoice_date:editForm.invoice_date||null,
       dispatch_date:editForm.dispatch_date||null,
+      gst_rate:Number(editForm.gst_rate||12),
     }).eq('id',editPO.id);
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('PO updated ✓'); setEditPO(null); await fetchAll(); }
     setSaving(false);
   };
 
-  const showToast = msg => { setToast(msg); setTimeout(()=>setToast(''),3500); };
+  const showToast = (msg, type='ok') => {
+    setToast(msg); setToastType(type);
+    setTimeout(()=>setToast(''), type==='error' ? 7000 : 3500);
+  };
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -299,7 +396,7 @@ export default function DashboardPage() {
     if (!vendorForm.name) { showToast('Enter vendor name'); return; }
     setSaving(true);
     const {error}=await supabase.from('vendors').insert([vendorForm]);
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('Vendor added ✓'); setVendorForm({name:'',vendor_type:'Manufacturer',gstin:'',contact_name:'',phone:'',email:'',address:'',notes:''}); await fetchAll(); }
     setSaving(false);
   };
@@ -329,9 +426,23 @@ export default function DashboardPage() {
         status: newDelivered >= (po?.qty||0) ? 'Delivered / Fulfilled' : po?.status
       }).eq('id',deliveryForm.po_id);
     }
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('Delivery logged ✓'); setDeliveryForm({po_id:'',delivery_date:'',qty_delivered:'',notes:''}); await fetchAll(); }
     setSaving(false);
+  };
+
+  const markAllDelivered = async (po) => {
+    const alreadyDel = deliveries.filter(d=>d.po_id===po.id).reduce((s,d)=>s+d.qty_delivered,0);
+    const remaining = po.qty - alreadyDel;
+    if (remaining <= 0) { showToast('Already fully delivered','error'); return; }
+    setSaving(true);
+    const today = new Date().toISOString().split('T')[0];
+    const {error}=await supabase.from('delivery_entries').insert([{po_id:po.id,delivery_date:today,qty_delivered:remaining,notes:'Full delivery — marked complete'}]);
+    if (!error) {
+      await supabase.from('purchase_orders').update({delivered_qty:po.qty,status:'Delivered / Fulfilled'}).eq('id',po.id);
+      showToast(`✓ ${remaining} units marked delivered`);
+    } else showToast('Error: '+error.message,'error');
+    await fetchAll(); setSaving(false);
   };
 
   const deleteDelivery = async (id, po_id, qty) => {
@@ -356,6 +467,7 @@ export default function DashboardPage() {
       purchase_price:Number(poForm.purchase_price),
       vendor_name:vendor?.name||poForm.vendor_name||'Primary Manufacturer',
       vendor_invoice_no:poForm.vendor_invoice_no, purchase_date:poForm.purchase_date||null,
+      gst_rate:Number(poForm.gst_rate||settings.gst_rate_sales||12),
       advance:Number(poForm.advance), po_date:poForm.po_date, status:poForm.status,
       invoice_no:poForm.invoice_no||null, invoice_date:poForm.invoice_date||null,
       dispatch_date:poForm.dispatch_date||null, delivered_qty:0
@@ -374,7 +486,7 @@ export default function DashboardPage() {
     setSaving(true);
     const {data:idData}=await supabase.rpc('next_cn_id');
     const {error}=await supabase.from('credit_notes').insert([{id:idData,po_id:cnForm.po_id,customer_id:po.customer_id,type:cnForm.type,amount:Number(cnForm.amount||0),foc_units:Number(cnForm.foc_units||0),cn_date:cnForm.cn_date,note:cnForm.note}]);
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('Added ✓'); setCnForm({po_id:'',type:'CNNote',amount:'',foc_units:'',cn_date:'',note:''}); await fetchAll(); }
     setSaving(false);
   };
@@ -383,7 +495,7 @@ export default function DashboardPage() {
     if (!mfrCNForm.cn_ref||!mfrCNForm.cn_date||!mfrCNForm.total_value) { showToast('Fill required fields'); return; }
     setSaving(true);
     const {error}=await supabase.from('manufacturer_cns').insert([{cn_ref:mfrCNForm.cn_ref,cn_date:mfrCNForm.cn_date,total_value:Number(mfrCNForm.total_value),description:mfrCNForm.description}]);
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('Mfr CN added ✓'); setMfrCNForm({cn_ref:'',cn_date:'',total_value:'',description:''}); await fetchAll(); }
     setSaving(false);
   };
@@ -394,7 +506,7 @@ export default function DashboardPage() {
     const amt=Number(expForm.amount),gst=Number(expForm.gst_rate||0);
     const gstAmt=parseFloat((amt*gst/100).toFixed(2)),total=parseFloat((amt+gstAmt).toFixed(2));
     const {error}=await supabase.from('manufacturer_cn_expenses').insert([{mfr_cn_id:Number(expForm.mfr_cn_id),expense_name:expForm.expense_name,expense_date:expForm.expense_date,amount:amt,gst_rate:gst,gst_amount:gstAmt,total_amount:total,vendor_name:expForm.vendor_name,invoice_ref:expForm.invoice_ref,notes:expForm.notes}]);
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('Expense booked ✓'); setExpForm({mfr_cn_id:expForm.mfr_cn_id,expense_name:'',expense_date:'',amount:'',gst_rate:'18',vendor_name:'',invoice_ref:'',notes:''}); await fetchAll(); }
     setSaving(false);
   };
@@ -412,7 +524,7 @@ export default function DashboardPage() {
       is_gst_claimable:bizExpForm.is_gst_claimable,
       payment_mode:bizExpForm.payment_mode, notes:bizExpForm.notes,
     }]);
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('Expense added ✓'); setBizExpForm({expense_date:'',category:'Rent',description:'',vendor_name:'',invoice_ref:'',amount:'',gst_rate:'0',is_gst_claimable:true,payment_mode:'Bank Transfer',notes:''}); await fetchAll(); }
     setSaving(false);
   };
@@ -421,7 +533,7 @@ export default function DashboardPage() {
     if (!pipeForm.customer_id||!pipeForm.expected_qty||!pipeForm.expected_date) { showToast('Fill required fields'); return; }
     setSaving(true);
     const {error}=await supabase.from('pipeline_orders').insert([{customer_id:Number(pipeForm.customer_id),expected_qty:Number(pipeForm.expected_qty),expected_value:Number(pipeForm.expected_value||0),expected_date:pipeForm.expected_date,delivery_type:pipeForm.delivery_type,probability:Number(pipeForm.probability||50),notes:pipeForm.notes,status:pipeForm.status}]);
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('Added ✓'); setPipeForm({customer_id:'',expected_qty:'',expected_value:'',expected_date:'',delivery_type:'DDP',probability:'75',notes:'',status:'Active'}); await fetchAll(); }
     setSaving(false);
   };
@@ -431,7 +543,7 @@ export default function DashboardPage() {
     if (!cashForm.txn_date||!cashForm.amount) { showToast('Fill required fields'); return; }
     setSaving(true);
     const {error}=await supabase.from('cash_transactions').insert([{txn_date:cashForm.txn_date,txn_type:cashForm.txn_type,category:cashForm.category,amount:Number(cashForm.amount),reference_po:cashForm.reference_po||null,description:cashForm.description}]);
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('Transaction added ✓'); setCashForm({txn_date:'',txn_type:'Cash In',category:'Balance Receipt',amount:'',reference_po:'',description:''}); await fetchAll(); }
     setSaving(false);
   };
@@ -444,7 +556,7 @@ export default function DashboardPage() {
       {key:'default_purchase_price_ddp',value:String(settingsForm.ddp),label:'DDP',updated_at:new Date().toISOString()},
       {key:'gst_rate_sales',value:String(settingsForm.gst_rate),label:'GST Rate on Sales (%)',updated_at:new Date().toISOString()},
     ],{onConflict:'key'});
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('Settings saved ✓'); await fetchAll(); }
     setSaving(false);
   };
@@ -453,7 +565,7 @@ export default function DashboardPage() {
     if (!targetForm.fy_label||!targetForm.fy_start||!targetForm.fy_end||!targetForm.target_units||!targetForm.target_value) { showToast('Fill required fields'); return; }
     setSaving(true);
     const {error}=await supabase.from('annual_targets').upsert([{fy_label:targetForm.fy_label,fy_start:targetForm.fy_start,fy_end:targetForm.fy_end,target_units:Number(targetForm.target_units),target_value:Number(targetForm.target_value),target_profit:Number(targetForm.target_profit||0),mfr_slab_1_units:Number(targetForm.mfr_slab_1_units||0),mfr_slab_1_bonus:Number(targetForm.mfr_slab_1_bonus||0),mfr_slab_2_units:Number(targetForm.mfr_slab_2_units||0),mfr_slab_2_bonus:Number(targetForm.mfr_slab_2_bonus||0),notes:targetForm.notes}],{onConflict:'fy_label'});
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('Target saved ✓'); await fetchAll(); }
     setSaving(false);
   };
@@ -478,7 +590,7 @@ export default function DashboardPage() {
       advance_received:Number(piForm.advance_received||0), advance_date:piForm.advance_date||null,
       payment_terms:piForm.payment_terms, status:piForm.status, notes:piForm.notes
     }]);
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('PI added ✓'); setPiForm({pi_number:'',po_id:'',customer_id:'',pi_date:'',amount:'',gst_amount:'',total_amount:'',advance_due:'',advance_received:'',advance_date:'',payment_terms:'100% Advance against PI',status:'Pending',notes:''}); await fetchAll(); }
     setSaving(false);
   };
@@ -498,6 +610,37 @@ export default function DashboardPage() {
     await fetchAll();
   };
 
+  const openEditPI = pi => {
+    setEditPIForm({
+      pi_number:pi.pi_number, po_id:pi.po_id||'',
+      customer_id:String(pi.customer_id), pi_date:pi.pi_date,
+      amount:String(pi.amount), gst_amount:String(pi.gst_amount),
+      total_amount:String(pi.total_amount), advance_due:String(pi.advance_due),
+      advance_received:String(pi.advance_received), advance_date:pi.advance_date||'',
+      payment_terms:pi.payment_terms||'', status:pi.status, notes:pi.notes||''
+    });
+    setEditPI(pi);
+  };
+
+  const saveEditPI = async () => {
+    if (!editPIForm.pi_number||!editPIForm.total_amount) { showToast('Fill required fields','error'); return; }
+    setSaving(true);
+    const received=Number(editPIForm.advance_received);
+    const due=Number(editPIForm.advance_due);
+    const status=received<=0?'Pending':received>=due?'Paid':'Partially Paid';
+    const {error}=await supabase.from('proforma_invoices').update({
+      pi_number:editPIForm.pi_number, po_id:editPIForm.po_id||null,
+      customer_id:Number(editPIForm.customer_id), pi_date:editPIForm.pi_date,
+      amount:Number(editPIForm.amount), gst_amount:Number(editPIForm.gst_amount),
+      total_amount:Number(editPIForm.total_amount), advance_due:due,
+      advance_received:received, advance_date:editPIForm.advance_date||null,
+      payment_terms:editPIForm.payment_terms, status, notes:editPIForm.notes
+    }).eq('id',editPI.id);
+    if (error) showToast('Error: '+error.message,'error');
+    else { showToast('PI updated ✓'); setEditPI(null); await fetchAll(); }
+    setSaving(false);
+  };
+
   const deletePI = async (id) => {
     setSaving(true);
     await supabase.from('proforma_invoices').delete().eq('id',id);
@@ -513,7 +656,7 @@ export default function DashboardPage() {
     if (existingSiteQty+Number(siteForm.qty)>Number(po?.qty||0)) { showToast(`⛔ Total site qty (${existingSiteQty+Number(siteForm.qty)}) exceeds PO qty (${po?.qty})`); return; }
     setSaving(true);
     const {error}=await supabase.from('delivery_sites').insert([{...siteForm,qty:Number(siteForm.qty)}]);
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('Delivery site added ✓'); setSiteForm({po_id:'',site_name:'',address:'',gstin:'',contact_name:'',phone:'',qty:'',notes:''}); await fetchAll(); }
     setSaving(false);
   };
@@ -534,8 +677,36 @@ export default function DashboardPage() {
       amount:Number(receiptForm.amount), payment_mode:receiptForm.payment_mode,
       reference:receiptForm.reference||null, notes:receiptForm.notes||null
     }]);
-    if (error) showToast('Error: '+error.message);
+    if (error) showToast('Error: '+error.message, 'error');
     else { showToast('Receipt logged ✓'); setReceiptForm({receipt_no:'',customer_id:'',po_id:'',receipt_date:'',amount:'',payment_mode:'Bank Transfer',reference:'',notes:''}); await fetchAll(); }
+    setSaving(false);
+  };
+
+  const openEditReceipt = r => {
+    setEditReceiptForm({
+      receipt_no:r.receipt_no||'', customer_id:String(r.customer_id),
+      po_id:r.po_id||'', receipt_date:r.receipt_date,
+      amount:String(r.amount), payment_mode:r.payment_mode||'Bank Transfer',
+      reference:r.reference||'', notes:r.notes||''
+    });
+    setEditReceipt(r);
+  };
+
+  const saveEditReceipt = async () => {
+    if (!editReceiptForm.amount||!editReceiptForm.receipt_date) { showToast('Fill required fields','error'); return; }
+    setSaving(true);
+    const {error}=await supabase.from('payment_receipts').update({
+      receipt_no:editReceiptForm.receipt_no||null,
+      customer_id:Number(editReceiptForm.customer_id),
+      po_id:editReceiptForm.po_id||null,
+      receipt_date:editReceiptForm.receipt_date,
+      amount:Number(editReceiptForm.amount),
+      payment_mode:editReceiptForm.payment_mode,
+      reference:editReceiptForm.reference||null,
+      notes:editReceiptForm.notes||null
+    }).eq('id',editReceipt.id);
+    if (error) showToast('Error: '+error.message,'error');
+    else { showToast('Receipt updated ✓'); setEditReceipt(null); await fetchAll(); }
     setSaving(false);
   };
 
@@ -663,9 +834,10 @@ export default function DashboardPage() {
     const fyMonths=FY_MONTHS(fy.fy_label);
 
     const monthly=fyMonths.map(m=>{
-      const mPos=pos.filter(p=>p.po_date>=m.start&&p.po_date<=m.end);
-      const outputGST=mPos.reduce((s,p)=>s+p.qty*p.unit_price,0)*rate;
-      const inputGSTPurch=mPos.reduce((s,p)=>s+p.qty*Number(p.purchase_price),0)*rate;
+      // B1 fix: use invoice_date for GST point of liability; fall back to po_date
+      const mPos=pos.filter(p=>{ const d=p.invoice_date||p.po_date; return d>=m.start&&d<=m.end; });
+      const outputGST=mPos.reduce((s,p)=>{ const r=(Number(p.gst_rate??settings.gst_rate_sales??12))/100; const net=p.qty*p.unit_price-(Number(p.discount_amount)||0); return s+net*r; },0);
+      const inputGSTPurch=mPos.reduce((s,p)=>{ const r=(Number(p.gst_rate??settings.gst_rate_sales??12))/100; return s+p.qty*Number(p.purchase_price)*r; },0);
       const inputGSTMfrExp=mfrExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.gst_amount),0);
       const inputGSTBizExp=bizExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end&&e.is_gst_claimable).reduce((s,e)=>s+Number(e.gst_amount),0);
       const totalInput=inputGSTPurch+inputGSTMfrExp+inputGSTBizExp;
@@ -681,7 +853,8 @@ export default function DashboardPage() {
   const agingAnalytics = useMemo(()=>{
     const today=new Date();
     const aged=pos.filter(p=>p.status!=='Delivered / Fulfilled').map(p=>{
-      const bal=Math.max(0,p.qty*p.unit_price-p.advance);
+      const fin=poFinancials(p);
+      const bal=fin.balanceDue;
       const days=Math.floor((today-new Date(p.po_date))/(1000*86400));
       const bucket=days<=30?'0-30':days<=60?'31-60':days<=90?'61-90':'90+';
       return {...p,bal,days,bucket,custName:customers.find(c=>c.id===p.customer_id)?.name||'—'};
@@ -781,8 +954,8 @@ export default function DashboardPage() {
     </div>
   );
 
-  const KPICard = ({label,val,sub,color}) => (
-    <div className="kc">
+  const KPICard = ({label,val,sub,color,onClick,active}) => (
+    <div className="kc" onClick={onClick} style={{cursor:onClick?'pointer':'default',borderColor:active?color:'',outline:active?`2px solid ${color}40`:'none'}}>
       <div style={{fontSize:10,color:'#8a7e72',fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:8}}>{label}</div>
       <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,fontWeight:500,color,lineHeight:1}}>{val}</div>
       {sub&&<div style={{fontSize:11,color:'#7a6e64',marginTop:5}}>{sub}</div>}
@@ -811,9 +984,10 @@ export default function DashboardPage() {
         .search-bar{width:100%;background:#f5f0e8;border:1px solid #d4cdc2;border-radius:2px;padding:7px 12px;color:#2c2520;font-size:12px;font-family:'Noto Sans JP',sans-serif;outline:none;}
         .search-bar:focus{border-color:#b8924a;}
         .search-bar::placeholder{color:#a09689;}
+        @keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
       `}</style>
 
-      {toast&&<div style={{position:'fixed',top:20,right:20,background:'#eaf4ec',border:'1px solid #5a9e6f',color:'#2a6640',padding:'11px 18px',borderRadius:10,fontFamily:"'DM Mono',monospace",fontSize:12,zIndex:9999,boxShadow:'0 4px 16px rgba(120,90,50,.15)'}}>{toast}</div>}
+      {toast&&<div style={{position:'fixed',top:20,right:20,background:toastType==='error'?'#fef0f0':'#eaf4ec',border:`1px solid ${toastType==='error'?'#e0a0a0':'#5a9e6f'}`,color:toastType==='error'?'#8a2020':'#2a6640',padding:'11px 18px',borderRadius:6,fontFamily:"'DM Mono',monospace",fontSize:12,zIndex:9999,boxShadow:'0 4px 16px rgba(120,90,50,.15)',display:'flex',alignItems:'center',gap:8,maxWidth:360,cursor:'pointer'}} onClick={()=>setToast('')}>{toastType==='error'?'⚠ ':''}{toast}</div>}
 
       {/* ── Confirm Delete Modal ── */}
       {confirmDelete&&(
@@ -867,16 +1041,71 @@ export default function DashboardPage() {
             <div style={{fontFamily:"'Noto Sans JP',sans-serif",fontSize:20,fontWeight:300,color:'#2c2520',letterSpacing:'.02em'}}>Executive Overview</div>
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'#a09689',marginTop:3}}>GSTIN: {COMPANY.gstin} · {COMPANY.address}</div>
           </div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:16}}>
             <KPICard label="Gross Sales" val={fmtL(analytics.totalSalesGross)} sub={`${fmt(analytics.totalUnits)} units`} color="#b8924a"/>
             <KPICard label="Net Sales" val={fmtL(analytics.totalNetSales)} sub={`After CNs: −${fmtL(analytics.totalCNValue)}`} color="#2d7fa8"/>
             <KPICard label="Purchase Cost" val={fmtL(analytics.totalPurchCost)} sub={`FOC cost: ${fmtL(analytics.totalFOCCost)}`} color="#6a5a9a"/>
-            <KPICard label="Business Expenses" val={fmtL(analytics.totalBizExp)} sub="Salaries, rent, overheads" color="#c87030"/>
+            <KPICard label="Business Expenses" val={fmtL(analytics.totalBizExp)} sub="Click to see breakdown" color="#c87030" onClick={()=>setDrillDown(d=>d?.type==='expenses'?null:{type:'expenses'})} active={drillDown?.type==='expenses'}/>
             <KPICard label="Net Profit" val={fmtL(analytics.totalProfit)} sub={`Margin: ${pct((analytics.totalProfit/analytics.totalNetSales)*100)}`} color={analytics.totalProfit>=0?'#2d8a5e':'#b85a5a'}/>
             <KPICard label="Advances Received" val={fmtL(analytics.totalAdvances)} sub="from customers" color="#2d8a5e"/>
-            <KPICard label="Pending Collections" val={fmtL(analytics.pendingAdvance)} sub="on open orders" color={analytics.pendingAdvance>0?'#b85a5a':'#2d8a5e'}/>
-            <KPICard label="Open Orders" val={fmt(analytics.unfulfilled.length)} sub="pending delivery" color="#b8924a"/>
+            <KPICard label="Pending Collections" val={fmtL(analytics.pendingAdvance)} sub="Click to see by customer" color={analytics.pendingAdvance>0?'#b85a5a':'#2d8a5e'} onClick={()=>setDrillDown(d=>d?.type==='pending'?null:{type:'pending'})} active={drillDown?.type==='pending'}/>
+            <KPICard label="Open Orders" val={fmt(analytics.unfulfilled.length)} sub="Click to see details" color="#b8924a" onClick={()=>setDrillDown(d=>d?.type==='open'?null:{type:'open'})} active={drillDown?.type==='open'}/>
           </div>
+          {/* Drill-down panel */}
+          {drillDown&&(
+            <div style={{...card,padding:18,marginBottom:16,borderColor:'#b8924a',animation:'fadeIn .15s ease'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',letterSpacing:'.12em'}}>
+                  {drillDown.type==='open'?'OPEN ORDERS DETAIL':drillDown.type==='pending'?'PENDING COLLECTIONS BY CUSTOMER':'EXPENSES BY CATEGORY'}
+                </div>
+                <button onClick={()=>setDrillDown(null)} style={{background:'transparent',border:'none',color:'#a09689',cursor:'pointer',fontSize:16,lineHeight:1}}>×</button>
+              </div>
+              {drillDown.type==='open'&&(
+                <table>
+                  <thead><tr>{['PO No','Customer','Qty','Bal Qty','Stage','Invoiced','Balance Due','PO Date'].map(h=><th key={h}>{h}</th>)}</tr></thead>
+                  <tbody>{analytics.unfulfilled.length===0
+                    ?<tr><td colSpan={8} style={{textAlign:'center',color:'#a09689',padding:16}}>No open orders</td></tr>
+                    :analytics.unfulfilled.map(p=>{ const c=customers.find(x=>x.id===p.customer_id); const fin=poFinancials(p); return (
+                    <tr key={p.id} style={{cursor:'pointer'}} onClick={()=>{setView('pos');setDrillDown(null);}}>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a'}}>{p.id}</td>
+                      <td style={{fontWeight:500}}>{c?.name||'—'}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",textAlign:'center'}}>{fin.orderedQty}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#b08030',textAlign:'center'}}>{fin.balQty}</td>
+                      <td><StatusBadge s={p.status}/></td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#4a8fa8'}}>{fmtL(fin.invoicedAmt)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:fin.balanceDue>0?'#b85a5a':'#2d8a5e',fontWeight:600}}>{fmtL(fin.balanceDue)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#a09689'}}>{p.po_date}</td>
+                    </tr>);})}</tbody>
+                </table>
+              )}
+              {drillDown.type==='pending'&&(
+                <table>
+                  <thead><tr>{['Customer','Open POs','Total Invoiced','Total Received','Outstanding'].map(h=><th key={h}>{h}</th>)}</tr></thead>
+                  <tbody>{analytics.perCustomer.filter(c=>c.pending>0).length===0
+                    ?<tr><td colSpan={5} style={{textAlign:'center',color:'#a09689',padding:16}}>No pending collections</td></tr>
+                    :analytics.perCustomer.filter(c=>c.pending>0).sort((a,b)=>b.pending-a.pending).map(c=>(
+                    <tr key={c.id} style={{cursor:'pointer'}} onClick={()=>{setLedgerCust(c.id);setView('ledger');setDrillDown(null);}}>
+                      <td style={{fontWeight:500}}>{c.name}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",textAlign:'center'}}>{pos.filter(p=>p.customer_id===c.id&&p.status!=='Delivered / Fulfilled').length}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#4a8fa8'}}>{fmtL(c.grossSales)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{fmtL(c.advance)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a',fontWeight:700}}>{fmtL(c.pending)}</td>
+                    </tr>))}</tbody>
+                </table>
+              )}
+              {drillDown.type==='expenses'&&(
+                <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:10}}>
+                  {EXP_CATS.filter(cat=>bizExpAnalytics.byCat[cat]>0).map(cat=>(
+                    <div key={cat} style={{background:'#f5f0e8',borderRadius:4,padding:'12px 14px',borderLeft:`3px solid ${catColor(cat)}`}}>
+                      <div style={{fontSize:9,color:'#8a7e72',fontFamily:"'DM Mono',monospace",marginBottom:4}}>{cat.toUpperCase()}</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:15,color:catColor(cat),fontWeight:600}}>{fmtL(bizExpAnalytics.byCat[cat])}</div>
+                      <div style={{fontSize:10,color:'#a09689',marginTop:2}}>{pct(bizExpAnalytics.byCat[cat]/bizExpAnalytics.total*100)} of total</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div className="sec">Customer Profitability</div>
           <div style={{...card,overflow:'auto',marginBottom:16}}>
             <table>
@@ -1209,7 +1438,7 @@ export default function DashboardPage() {
           <div style={{...card,padding:18,marginBottom:18}}>
             <div style={{fontSize:12,color:'#b8924a',fontFamily:"'DM Mono',monospace",marginBottom:12}}>+ ADD OPPORTUNITY</div>
             <div style={{...g4,marginBottom:10}}>
-              <div><label style={lbl}>Customer *</label><select style={inp} value={pipeForm.customer_id} onChange={e=>setPipeForm({...pipeForm,customer_id:e.target.value})}><option value="">Select…</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+              <div><label style={lbl}>Customer *</label><SearchableCustSelect customers={customers} value={pipeForm.customer_id} onChange={v=>setPipeForm({...pipeForm,customer_id:v})} inputStyle={inp}/></div>
               <div><label style={lbl}>Qty *</label><input style={inp} type="number" value={pipeForm.expected_qty} onChange={e=>setPipeForm({...pipeForm,expected_qty:e.target.value})}/></div>
               <div><label style={lbl}>Expected Value (₹)</label><input style={inp} type="number" value={pipeForm.expected_value} onChange={e=>setPipeForm({...pipeForm,expected_value:e.target.value})}/></div>
               <div><label style={lbl}>Expected Date *</label><input style={inp} type="date" value={pipeForm.expected_date} onChange={e=>setPipeForm({...pipeForm,expected_date:e.target.value})}/></div>
@@ -1234,7 +1463,10 @@ export default function DashboardPage() {
                   <td><span style={{fontSize:10,color:sc[p.status],fontFamily:"'DM Mono',monospace"}}>{p.status}</span></td>
                   <td style={{color:'#7a6e64',fontSize:11,maxWidth:140}}>{p.notes}</td>
                   <td><select style={{...inp,width:'auto',fontSize:10,padding:'3px 6px'}} value={p.status} onChange={e=>updatePipelineStatus(p.id,e.target.value)}>{['Active','Won','Lost','Deferred'].map(s=><option key={s}>{s}</option>)}</select></td>
-                  <td><button onClick={()=>askDelete('pipe',p.id,`Pipeline — ${cust?.name||''} ${p.expected_qty} units`,()=>deletePipeline(p.id))} style={{background:'#fef0f0',border:'1px solid #e8d0d0',color:'#b85a5a',borderRadius:4,padding:'4px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
+                  <td style={{whiteSpace:'nowrap'}}>
+                    <button onClick={()=>openEditPipe(p)} style={{background:'#fdf6ec',border:'1px solid #e0d8cc',color:'#b8924a',borderRadius:4,padding:'4px 10px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace",marginRight:4}}>✏ Edit</button>
+                    <button onClick={()=>askDelete('pipe',p.id,`Pipeline — ${cust?.name||''} ${p.expected_qty} units`,()=>deletePipeline(p.id))} style={{background:'#fef0f0',border:'1px solid #e8d0d0',color:'#b85a5a',borderRadius:4,padding:'4px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button>
+                  </td>
                 </tr>);
               })}</tbody>
             </table>
@@ -1288,26 +1520,27 @@ export default function DashboardPage() {
                   <button type="button" onClick={()=>setPoForm({...poForm,po_id:nextPONumber()})} style={{...btn(false,'#d4cdc2','#b8924a'),border:'1px solid #b8924a',padding:'8px 10px',fontSize:10,flexShrink:0}}>AUTO</button>
                 </div>
               </div>
-              <div><label style={lbl}>Customer *</label><select style={inp} value={poForm.customer_id} onChange={e=>setPoForm({...poForm,customer_id:e.target.value})}><option value="">Select…</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+              <div><label style={lbl}>Customer *</label><SearchableCustSelect customers={customers} value={poForm.customer_id} onChange={v=>setPoForm({...poForm,customer_id:v})} inputStyle={inp}/></div>
               <div><label style={lbl}>Delivery *</label><select style={inp} value={poForm.delivery_type} onChange={e=>{ const def=e.target.value==='DDP'?settings.default_purchase_price_ddp:settings.default_purchase_price_exw; setPoForm({...poForm,delivery_type:e.target.value,purchase_price:def}); }}><option value="DDP">DDP</option><option value="EXW">EXW</option></select></div>
               <div><label style={lbl}>Qty *</label><input style={inp} type="number" value={poForm.qty} onChange={e=>setPoForm({...poForm,qty:e.target.value})}/></div>
               <div><label style={lbl}>Unit Price (₹) *</label><input style={inp} type="number" value={poForm.unit_price} onChange={e=>{ const up=Number(e.target.value); const da=poForm.discount_pct>0?parseFloat((up*poForm.qty*poForm.discount_pct/100).toFixed(2)):poForm.discount_amount; setPoForm({...poForm,unit_price:e.target.value,discount_amount:da}); }}/></div>
               <div><label style={lbl}>Discount %</label><input style={inp} type="number" min="0" max="100" placeholder="0" value={poForm.discount_pct} onChange={e=>{ const dp=Number(e.target.value); const da=parseFloat((Number(poForm.unit_price)*Number(poForm.qty)*dp/100).toFixed(2)); setPoForm({...poForm,discount_pct:e.target.value,discount_amount:da}); }}/></div>
               <div><label style={lbl}>Discount Amt (₹)</label><input style={inp} type="number" placeholder="0" value={poForm.discount_amount} onChange={e=>{ const da=Number(e.target.value); const base=Number(poForm.unit_price)*Number(poForm.qty); const dp=base>0?parseFloat((da/base*100).toFixed(2)):0; setPoForm({...poForm,discount_amount:e.target.value,discount_pct:dp}); }}/></div>
+              <div><label style={lbl}>GST Rate % *</label><select style={inp} value={poForm.gst_rate} onChange={e=>setPoForm({...poForm,gst_rate:e.target.value})}>{GST_RATES.map(r=><option key={r} value={r}>{r}%{r===0?' (Exempt)':''}</option>)}</select></div>
             </div>
             {/* Live invoice preview */}
             {poForm.qty&&poForm.unit_price&&(()=>{
               const gross=Number(poForm.qty)*Number(poForm.unit_price);
               const disc=Number(poForm.discount_amount||0);
               const netTax=gross-disc;
-              const gstAmt=netTax*(settings.gst_rate_sales||12)/100;
+              const gstAmt=netTax*(Number(poForm.gst_rate)||settings.gst_rate_sales||12)/100;
               const invTotal=netTax+gstAmt;
               const profitGross=netTax-Number(poForm.qty)*Number(poForm.purchase_price||0);
               return <div style={{background:'#fff8f0',border:'1px solid #e0d8cc',borderRadius:6,padding:'10px 16px',marginBottom:12,display:'flex',gap:20,flexWrap:'wrap',fontSize:12,fontFamily:"'DM Mono',monospace"}}>
                 <span style={{color:'#8a7e72'}}>Taxable: <strong style={{color:'#2c2520'}}>{fmtL(gross)}</strong></span>
                 {disc>0&&<span style={{color:'#8a7e72'}}>Discount: <strong style={{color:'#b85a5a'}}>−{fmtL(disc)}</strong></span>}
                 {disc>0&&<span style={{color:'#8a7e72'}}>Net Taxable: <strong style={{color:'#b8924a'}}>{fmtL(netTax)}</strong></span>}
-                <span style={{color:'#8a7e72'}}>GST ({settings.gst_rate_sales||12}%): <strong style={{color:'#6a5a9a'}}>{fmtL(gstAmt)}</strong></span>
+                <span style={{color:'#8a7e72'}}>GST ({Number(poForm.gst_rate)||settings.gst_rate_sales||12}%): <strong style={{color:'#6a5a9a'}}>{fmtL(gstAmt)}</strong></span>
                 <span style={{color:'#8a7e72'}}>Invoice Total: <strong style={{color:'#2d7fa8'}}>{fmtL(invTotal)}</strong></span>
                 {poForm.purchase_price&&<span style={{color:'#8a7e72'}}>Gross Profit: <strong style={{color:profitGross>=0?'#2d8a5e':'#b85a5a'}}>{fmtL(profitGross)}</strong></span>}
               </div>;
@@ -1315,7 +1548,10 @@ export default function DashboardPage() {
             <div style={{background:'#fdf6ec',border:'1px solid #e0d8cc',borderRadius:6,padding:12,marginBottom:12}}>
               <div style={{fontSize:10,color:'#6366f1',fontFamily:"'DM Mono',monospace",marginBottom:10}}>VENDOR / PURCHASE</div>
               <div style={{...g4}}>
-                <div><label style={lbl}>Vendor</label><select style={inp} value={poForm.vendor_id} onChange={e=>setPoForm({...poForm,vendor_id:e.target.value})}><option value="">Select vendor…</option>{vendors.map(v=><option key={v.id} value={v.id}>{v.name} ({v.vendor_type})</option>)}</select></div>
+                <div><label style={lbl}>Vendor</label><select style={inp} value={poForm.vendor_id} onChange={e=>{
+                  const v=vendors.find(x=>String(x.id)===e.target.value);
+                  setPoForm({...poForm,vendor_id:e.target.value,vendor_name:v?v.name:poForm.vendor_name});
+                }}><option value="">Select vendor…</option>{vendors.map(v=><option key={v.id} value={v.id}>{v.name} ({v.vendor_type})</option>)}</select></div>
                 <div><label style={lbl}>Purchase Price (₹) *</label><input style={{...inp,borderColor:Number(poForm.purchase_price)!==(poForm.delivery_type==='DDP'?settings.default_purchase_price_ddp:settings.default_purchase_price_exw)&&poForm.purchase_price?'#8060c0':'#e0d8cc'}} type="number" value={poForm.purchase_price} onChange={e=>setPoForm({...poForm,purchase_price:e.target.value})}/></div>
                 <div><label style={lbl}>Vendor Invoice</label><input style={inp} type="text" value={poForm.vendor_invoice_no} onChange={e=>setPoForm({...poForm,vendor_invoice_no:e.target.value})}/></div>
                 <div><label style={lbl}>Purchase Date</label><input style={inp} type="date" value={poForm.purchase_date} onChange={e=>setPoForm({...poForm,purchase_date:e.target.value})}/></div>
@@ -1439,6 +1675,11 @@ export default function DashboardPage() {
                 <div><label style={lbl}>Dispatch Date</label>
                   <input style={inp} type="date" value={editForm.dispatch_date} onChange={e=>setEditForm({...editForm,dispatch_date:e.target.value})}/>
                 </div>
+                <div><label style={lbl}>GST Rate %</label>
+                  <select style={inp} value={editForm.gst_rate} onChange={e=>setEditForm({...editForm,gst_rate:e.target.value})}>
+                    {GST_RATES.map(r=><option key={r} value={r}>{r}%</option>)}
+                  </select>
+                </div>
                 <div><label style={lbl}>Status</label>
                   <select style={inp} value={editForm.status} onChange={e=>setEditForm({...editForm,status:e.target.value})}>
                     {PO_STAGES.map(s=><option key={s}>{s}</option>)}
@@ -1469,7 +1710,8 @@ export default function DashboardPage() {
           <div className="sec">Credit Notes & FOC</div>
           <div style={{...card,padding:18,marginBottom:16}}>
             <div style={{...g4}}>
-              <div><label style={lbl}>Linked PO *</label><select style={inp} value={cnForm.po_id} onChange={e=>setCnForm({...cnForm,po_id:e.target.value})}><option value="">Select PO…</option>{pos.map(p=>{ const c=customers.find(x=>x.id===p.customer_id); return <option key={p.id} value={p.id}>{p.id} — {c?.name}</option>; })}</select></div>
+              <div><label style={lbl}>Customer (filter)</label><SearchableCustSelect customers={customers} value={cnCustFilter} onChange={v=>{ setCnCustFilter(v); setCnForm(f=>({...f,po_id:''})); }} placeholder="Filter by customer…" inputStyle={inp}/></div>
+              <div><label style={lbl}>Linked PO *</label><select style={inp} value={cnForm.po_id} onChange={e=>setCnForm({...cnForm,po_id:e.target.value})}><option value="">Select PO…</option>{pos.filter(p=>!cnCustFilter||String(p.customer_id)===cnCustFilter).map(p=>{ const c=customers.find(x=>x.id===p.customer_id); return <option key={p.id} value={p.id}>{p.id} — {c?.name}</option>; })}</select></div>
               <div><label style={lbl}>Type *</label><select style={inp} value={cnForm.type} onChange={e=>setCnForm({...cnForm,type:e.target.value})}><option value="CNNote">Credit Note</option><option value="FOC">FOC Units</option></select></div>
               {cnForm.type==='CNNote'&&<div><label style={lbl}>Amount (₹)</label><input style={inp} type="number" value={cnForm.amount} onChange={e=>setCnForm({...cnForm,amount:e.target.value})}/></div>}
               {cnForm.type==='FOC'&&<div><label style={lbl}>FOC Units</label><input style={inp} type="number" value={cnForm.foc_units} onChange={e=>setCnForm({...cnForm,foc_units:e.target.value})}/></div>}
@@ -1481,7 +1723,7 @@ export default function DashboardPage() {
           <div style={{...card,overflow:'hidden'}}>
             <table>
               <thead><tr>{['ID','PO','Customer','Type','CN Amount','FOC Units','FOC Cost','Date','Remarks',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
-              <tbody>{cns.map(c=>{ const cust=customers.find(x=>x.id===c.customer_id),po=pos.find(p=>p.id===c.po_id),fc=c.type==='FOC'?c.foc_units*Number(po?.purchase_price||0):0; return (
+              <tbody>{cns.filter(c=>{ if(!searchCN) return true; const q=searchCN.toLowerCase(); const cust=customers.find(x=>x.id===c.customer_id); return c.po_id?.toLowerCase().includes(q)||cust?.name?.toLowerCase().includes(q); }).map(c=>{ const cust=customers.find(x=>x.id===c.customer_id),po=pos.find(p=>p.id===c.po_id),fc=c.type==='FOC'?c.foc_units*Number(po?.purchase_price||0):0; return (
                 <tr key={c.id}>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a'}}>{c.id}</td>
                   <td style={{fontFamily:"'DM Mono',monospace"}}>{c.po_id}</td>
@@ -1832,7 +2074,7 @@ export default function DashboardPage() {
             </div>
             <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:12}}>
               <div><label style={lbl}>PI Number *</label><input style={inp} type="text" placeholder="BSIPL/PI/0001/25-26" value={piForm.pi_number} onChange={e=>setPiForm({...piForm,pi_number:e.target.value})}/></div>
-              <div><label style={lbl}>Customer *</label><select style={inp} value={piForm.customer_id} onChange={e=>setPiForm({...piForm,customer_id:e.target.value})}><option value="">Select…</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+              <div><label style={lbl}>Customer *</label><SearchableCustSelect customers={customers} value={piForm.customer_id} onChange={v=>setPiForm({...piForm,customer_id:v})} inputStyle={inp}/></div>
               <div><label style={lbl}>Linked PO</label><select style={inp} value={piForm.po_id} onChange={e=>setPiForm({...piForm,po_id:e.target.value})}><option value="">None</option>{pos.filter(p=>!piForm.customer_id||p.customer_id===Number(piForm.customer_id)).map(p=><option key={p.id} value={p.id}>{p.id}</option>)}</select></div>
               <div><label style={lbl}>PI Date *</label><input style={inp} type="date" value={piForm.pi_date} onChange={e=>setPiForm({...piForm,pi_date:e.target.value})}/></div>
               <div><label style={lbl}>Taxable Amount (₹)</label><input style={inp} type="number" value={piForm.amount} onChange={e=>{ const a=Number(e.target.value); const g=a*(settings.gst_rate_sales||12)/100; setPiForm({...piForm,amount:e.target.value,gst_amount:g.toFixed(2),total_amount:(a+g).toFixed(2),advance_due:(a+g).toFixed(2)}); }}/></div>
@@ -1951,7 +2193,7 @@ export default function DashboardPage() {
                   <input style={{...inp,flex:1}} type="date" value={receiptForm.receipt_date} onChange={e=>setReceiptForm({...receiptForm,receipt_date:e.target.value})}/>
                 </div>
               </div>
-              <button onClick={()=>{ if(!ledgerCust){showToast('Select a customer first');return;} setReceiptForm(f=>({...f,customer_id:ledgerCust})); addReceipt(); }} disabled={saving} style={{...btn(saving,'#5a9e6f','#f5f0e8'),padding:'10px 16px'}}>{saving?'…':'LOG RECEIPT →'}</button>
+              <button onClick={async ()=>{ if(!ledgerCust){showToast('Select a customer first','error');return;} await new Promise(r=>{ setReceiptForm(f=>{const nf={...f,customer_id:ledgerCust};setTimeout(()=>r(nf),0);return nf;}); }); addReceipt(); }} disabled={saving} style={{...btn(saving,'#5a9e6f','#f5f0e8'),padding:'10px 16px'}}>{saving?'…':'LOG RECEIPT →'}</button>
             </div>
           </div>
 
@@ -2097,6 +2339,88 @@ export default function DashboardPage() {
 
         </>)}
       </div>
+
+      {/* ── Edit PI Modal ── */}
+      {editPI&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(80,60,40,0.45)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center',padding:20}} onClick={()=>setEditPI(null)}>
+          <div style={{background:'#fff8f0',border:'1px solid #e0d8cc',borderRadius:8,padding:28,maxWidth:680,width:'100%',boxShadow:'0 12px 40px rgba(120,90,50,.15)',maxHeight:'90vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#b8924a'}}>EDIT PROFORMA INVOICE — {editPI.pi_number}</div>
+              <button onClick={()=>setEditPI(null)} style={{background:'transparent',border:'none',color:'#a09689',cursor:'pointer',fontSize:20,lineHeight:1}}>×</button>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:14}}>
+              <div><label style={lbl}>PI Number</label><input style={inp} value={editPIForm.pi_number} onChange={e=>setEditPIForm({...editPIForm,pi_number:e.target.value})}/></div>
+              <div><label style={lbl}>Customer</label><SearchableCustSelect customers={customers} value={editPIForm.customer_id} onChange={v=>setEditPIForm({...editPIForm,customer_id:v})} inputStyle={inp}/></div>
+              <div><label style={lbl}>PI Date</label><input style={inp} type="date" value={editPIForm.pi_date} onChange={e=>setEditPIForm({...editPIForm,pi_date:e.target.value})}/></div>
+              <div><label style={lbl}>Taxable (₹)</label><input style={inp} type="number" value={editPIForm.amount} onChange={e=>{ const a=Number(e.target.value); const g=a*(settings.gst_rate_sales||12)/100; setEditPIForm({...editPIForm,amount:e.target.value,gst_amount:g.toFixed(2),total_amount:(a+g).toFixed(2)}); }}/></div>
+              <div><label style={lbl}>GST (₹)</label><input style={inp} type="number" value={editPIForm.gst_amount} onChange={e=>setEditPIForm({...editPIForm,gst_amount:e.target.value})}/></div>
+              <div><label style={lbl}>Total (₹)</label><input style={{...inp,borderColor:'#b8924a'}} type="number" value={editPIForm.total_amount} onChange={e=>setEditPIForm({...editPIForm,total_amount:e.target.value,advance_due:e.target.value})}/></div>
+              <div><label style={lbl}>Advance Due (₹)</label><input style={inp} type="number" value={editPIForm.advance_due} onChange={e=>setEditPIForm({...editPIForm,advance_due:e.target.value})}/></div>
+              <div><label style={lbl}>Advance Received (₹)</label><input style={inp} type="number" value={editPIForm.advance_received} onChange={e=>setEditPIForm({...editPIForm,advance_received:e.target.value})}/></div>
+              <div><label style={lbl}>Advance Date</label><input style={inp} type="date" value={editPIForm.advance_date} onChange={e=>setEditPIForm({...editPIForm,advance_date:e.target.value})}/></div>
+              <div style={{gridColumn:'span 2'}}><label style={lbl}>Payment Terms</label><input style={inp} value={editPIForm.payment_terms} onChange={e=>setEditPIForm({...editPIForm,payment_terms:e.target.value})}/></div>
+              <div><label style={lbl}>Status</label><select style={inp} value={editPIForm.status} onChange={e=>setEditPIForm({...editPIForm,status:e.target.value})}>{['Pending','Partially Paid','Paid','Cancelled'].map(s=><option key={s}>{s}</option>)}</select></div>
+            </div>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button onClick={()=>setEditPI(null)} style={{background:'transparent',border:'1px solid #e0d8cc',color:'#8a7e72',borderRadius:4,padding:'10px 20px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12}}>Cancel</button>
+              <button onClick={saveEditPI} disabled={saving} style={{...btn(saving),padding:'10px 28px'}}>{saving?'Saving…':'SAVE CHANGES →'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Pipeline Modal ── */}
+      {editPipe&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(80,60,40,0.45)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center',padding:20}} onClick={()=>setEditPipe(null)}>
+          <div style={{background:'#fff8f0',border:'1px solid #e0d8cc',borderRadius:8,padding:28,maxWidth:580,width:'100%',boxShadow:'0 12px 40px rgba(120,90,50,.15)'}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#b8924a'}}>EDIT PIPELINE ENTRY</div>
+              <button onClick={()=>setEditPipe(null)} style={{background:'transparent',border:'none',color:'#a09689',cursor:'pointer',fontSize:20,lineHeight:1}}>×</button>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
+              <div style={{gridColumn:'span 2'}}><label style={lbl}>Customer</label><SearchableCustSelect customers={customers} value={editPipeForm.customer_id} onChange={v=>setEditPipeForm({...editPipeForm,customer_id:v})} inputStyle={inp}/></div>
+              <div><label style={lbl}>Expected Qty</label><input style={inp} type="number" value={editPipeForm.expected_qty} onChange={e=>setEditPipeForm({...editPipeForm,expected_qty:e.target.value})}/></div>
+              <div><label style={lbl}>Expected Value (₹)</label><input style={inp} type="number" value={editPipeForm.expected_value} onChange={e=>setEditPipeForm({...editPipeForm,expected_value:e.target.value})}/></div>
+              <div><label style={lbl}>Expected Date</label><input style={inp} type="date" value={editPipeForm.expected_date} onChange={e=>setEditPipeForm({...editPipeForm,expected_date:e.target.value})}/></div>
+              <div><label style={lbl}>Probability %</label><input style={inp} type="number" min="0" max="100" value={editPipeForm.probability} onChange={e=>setEditPipeForm({...editPipeForm,probability:e.target.value})}/></div>
+              <div><label style={lbl}>Delivery Type</label><select style={inp} value={editPipeForm.delivery_type} onChange={e=>setEditPipeForm({...editPipeForm,delivery_type:e.target.value})}><option>DDP</option><option>EXW</option></select></div>
+              <div><label style={lbl}>Status</label><select style={inp} value={editPipeForm.status} onChange={e=>setEditPipeForm({...editPipeForm,status:e.target.value})}>{['Active','Won','Lost','Deferred'].map(s=><option key={s}>{s}</option>)}</select></div>
+              <div style={{gridColumn:'span 2'}}><label style={lbl}>Notes</label><input style={inp} value={editPipeForm.notes} onChange={e=>setEditPipeForm({...editPipeForm,notes:e.target.value})}/></div>
+            </div>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button onClick={()=>setEditPipe(null)} style={{background:'transparent',border:'1px solid #e0d8cc',color:'#8a7e72',borderRadius:4,padding:'10px 20px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12}}>Cancel</button>
+              <button onClick={saveEditPipe} disabled={saving} style={{...btn(saving),padding:'10px 28px'}}>{saving?'Saving…':'SAVE CHANGES →'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Receipt Modal ── */}
+      {editReceipt&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(80,60,40,0.45)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center',padding:20}} onClick={()=>setEditReceipt(null)}>
+          <div style={{background:'#fff8f0',border:'1px solid #e0d8cc',borderRadius:8,padding:28,maxWidth:540,width:'100%',boxShadow:'0 12px 40px rgba(120,90,50,.15)'}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#b8924a'}}>EDIT PAYMENT RECEIPT</div>
+              <button onClick={()=>setEditReceipt(null)} style={{background:'transparent',border:'none',color:'#a09689',cursor:'pointer',fontSize:20,lineHeight:1}}>×</button>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
+              <div><label style={lbl}>Receipt No.</label><input style={inp} value={editReceiptForm.receipt_no} onChange={e=>setEditReceiptForm({...editReceiptForm,receipt_no:e.target.value})}/></div>
+              <div><label style={lbl}>Date</label><input style={inp} type="date" value={editReceiptForm.receipt_date} onChange={e=>setEditReceiptForm({...editReceiptForm,receipt_date:e.target.value})}/></div>
+              <div style={{gridColumn:'span 2'}}><label style={lbl}>Customer</label><SearchableCustSelect customers={customers} value={editReceiptForm.customer_id} onChange={v=>setEditReceiptForm({...editReceiptForm,customer_id:v})} inputStyle={inp}/></div>
+              <div><label style={lbl}>Amount (₹)</label><input style={{...inp,borderColor:'#b8924a'}} type="number" value={editReceiptForm.amount} onChange={e=>setEditReceiptForm({...editReceiptForm,amount:e.target.value})}/></div>
+              <div><label style={lbl}>Payment Mode</label><select style={inp} value={editReceiptForm.payment_mode} onChange={e=>setEditReceiptForm({...editReceiptForm,payment_mode:e.target.value})}>{PAY_MODES.map(m=><option key={m}>{m}</option>)}</select></div>
+              <div><label style={lbl}>Reference / UTR</label><input style={inp} value={editReceiptForm.reference} onChange={e=>setEditReceiptForm({...editReceiptForm,reference:e.target.value})}/></div>
+              <div><label style={lbl}>Linked PO</label><select style={inp} value={editReceiptForm.po_id} onChange={e=>setEditReceiptForm({...editReceiptForm,po_id:e.target.value})}><option value="">None</option>{pos.filter(p=>!editReceiptForm.customer_id||String(p.customer_id)===editReceiptForm.customer_id).map(p=><option key={p.id} value={p.id}>{p.id}</option>)}</select></div>
+              <div style={{gridColumn:'span 2'}}><label style={lbl}>Notes</label><input style={inp} value={editReceiptForm.notes} onChange={e=>setEditReceiptForm({...editReceiptForm,notes:e.target.value})}/></div>
+            </div>
+            <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button onClick={()=>setEditReceipt(null)} style={{background:'transparent',border:'1px solid #e0d8cc',color:'#8a7e72',borderRadius:4,padding:'10px 20px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12}}>Cancel</button>
+              <button onClick={saveEditReceipt} disabled={saving} style={{...btn(saving),padding:'10px 28px'}}>{saving?'Saving…':'SAVE CHANGES →'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
