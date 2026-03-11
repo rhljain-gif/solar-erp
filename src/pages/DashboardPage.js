@@ -2,6 +2,20 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../lib/AuthContext';
 
+const COMPANY = {
+  name: 'Basilsphere Innovations Private Limited',
+  short: 'BSIPL',
+  gstin: '07AANCB6176G1ZD',
+  address: '17-18, Level 5, Punj Essen House, Regus Evergsun Business Centre Pvt. Ltd., New Delhi – 110019',
+  email: 'office@bsipl.com',
+  poPrefix: 'BSIPL/PO/',
+};
+const MANUFACTURER = {
+  name: 'WattPower Systems Private Limited',
+  gstin: '33AADCW3840N1Z3',
+  address: 'Plot No. K-24, SIPCOT Industrial Park, Mambakkam, Sriperumbuddur Taluk, Kancheepuram Dist., Tamil Nadu-602105',
+};
+
 const VENDOR_TYPES = ['Manufacturer','Transporter','Installer','Service Provider','Other'];
 
 const fmt  = n => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n || 0);
@@ -79,6 +93,10 @@ export default function DashboardPage() {
   const [bizExp,setBizExp]     = useState([]);
   const [vendors,setVendors]   = useState([]);
   const [deliveries,setDeliveries] = useState([]);
+  const [pis,setPIs]           = useState([]);
+  const [sites,setSites]       = useState([]);
+  const [receipts,setReceipts] = useState([]);
+  const [ledgerCust,setLedgerCust] = useState(null);
   const [settings,setSettings] = useState({default_purchase_price_exw:400000,default_purchase_price_ddp:403000,gst_rate_sales:12});
   const [loading,setLoading]   = useState(true);
   const [saving,setSaving]     = useState(false);
@@ -86,6 +104,9 @@ export default function DashboardPage() {
   const [selectedFY,setFY]     = useState('FY 2024-25');
   const [expandedMfrCN,setExpandedMfrCN] = useState(null);
   const [expCatFilter,setExpCatFilter]   = useState('All');
+  const [searchPO,setSearchPO]           = useState('');
+  const [searchCust,setSearchCust]       = useState('');
+  const [searchVendor,setSearchVendor]   = useState('');
 
   // Forms
   const blankPO = s => ({po_id:'',customer_id:'',delivery_type:'DDP',qty:'',unit_price:'',discount_pct:'0',discount_amount:'0',purchase_price:s.default_purchase_price_ddp,vendor_id:'',vendor_invoice_no:'',purchase_date:'',advance:'',po_date:'',status:'PO Received',invoice_no:'',invoice_date:'',dispatch_date:'',delivered_qty:'0'});
@@ -102,6 +123,9 @@ export default function DashboardPage() {
   const [cashForm,setCashForm]   = useState({txn_date:'',txn_type:'Cash In',category:'Balance Receipt',amount:'',reference_po:'',description:''});
   const [targetForm,setTargetForm] = useState({fy_label:'',fy_start:'',fy_end:'',target_units:'',target_value:'',target_profit:'',mfr_slab_1_units:'',mfr_slab_1_bonus:'',mfr_slab_2_units:'',mfr_slab_2_bonus:'',notes:''});
   const [bizExpForm,setBizExpForm] = useState({expense_date:'',category:'Rent',description:'',vendor_name:'',invoice_ref:'',amount:'',gst_rate:'0',is_gst_claimable:true,payment_mode:'Bank Transfer',notes:''});
+  const [piForm,setPiForm]       = useState({pi_number:'',po_id:'',customer_id:'',pi_date:'',amount:'',gst_amount:'',total_amount:'',advance_due:'',advance_received:'',advance_date:'',payment_terms:'100% Advance against PI',status:'Pending',notes:''});
+  const [siteForm,setSiteForm]   = useState({po_id:'',site_name:'',address:'',gstin:'',contact_name:'',phone:'',qty:'',notes:''});
+  const [receiptForm,setReceiptForm] = useState({receipt_no:'',customer_id:'',po_id:'',receipt_date:'',amount:'',payment_mode:'Bank Transfer',reference:'',notes:''});
 
   const [editPO,setEditPO]           = useState(null);
   const [editForm,setEditForm]       = useState({});
@@ -214,7 +238,7 @@ export default function DashboardPage() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const [r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12] = await Promise.all([
+    const [r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15] = await Promise.all([
       supabase.from('customers').select('*').order('id'),
       supabase.from('purchase_orders').select('*').order('created_at'),
       supabase.from('credit_notes').select('*').order('created_at'),
@@ -227,12 +251,16 @@ export default function DashboardPage() {
       supabase.from('business_expenses').select('*').order('expense_date',{ascending:false}),
       supabase.from('vendors').select('*').order('name'),
       supabase.from('delivery_entries').select('*').order('delivery_date',{ascending:false}),
+      supabase.from('proforma_invoices').select('*').order('pi_date',{ascending:false}),
+      supabase.from('delivery_sites').select('*').order('created_at'),
+      supabase.from('payment_receipts').select('*').order('receipt_date',{ascending:false}),
     ]);
     setCust(r1.data||[]);  setPos(r2.data||[]);  setCns(r3.data||[]);
     setMfrCNs(r5.data||[]); setMfrExp(r6.data||[]);
     setTargets(r7.data||[]); setPipeline(r8.data||[]);
     setCashTxns(r9.data||[]); setBizExp(r10.data||[]);
     setVendors(r11.data||[]); setDeliveries(r12.data||[]);
+    setPIs(r13.data||[]); setSites(r14.data||[]); setReceipts(r15.data||[]);
     if (r4.data) {
       const p={}; r4.data.forEach(r=>{ p[r.key]=Number(r.value); });
       setSettings(p);
@@ -246,6 +274,19 @@ export default function DashboardPage() {
   useEffect(()=>{ fetchAll(); },[fetchAll]);
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
+  const nextPONumber = useCallback(() => {
+    const fy = targets.find(t=>t.fy_label===selectedFY) || targets[0];
+    const fyShort = fy ? fy.fy_label.replace('FY ','').replace('-','-').split('-').map((y,i)=>i===0?y.slice(2):y.slice(2)).join('-') : '25-26';
+    const existing = pos.filter(p=>p.id&&p.id.startsWith(COMPANY.poPrefix)).map(p=>{
+      const parts = p.id.split('/');
+      return parseInt(parts[2])||0;
+    });
+    const maxNum = existing.length>0 ? Math.max(...existing) : 0;
+    const next = String(maxNum+1).padStart(4,'0');
+    return `${COMPANY.poPrefix}${next}/${fyShort}`;
+  },[pos,targets,selectedFY]);
+
+
   const addCustomer = async () => {
     if (!custForm.name) return; setSaving(true);
     const {error}=await supabase.from('customers').insert([custForm]);
@@ -417,7 +458,131 @@ export default function DashboardPage() {
     setSaving(false);
   };
 
-  // ── Core P&L analytics ───────────────────────────────────────────────────
+    if (error) showToast('Error: '+error.message);
+    else { showToast('Target saved ✓'); await fetchAll(); }
+    setSaving(false);
+  };
+
+  // ── Proforma Invoice CRUD ─────────────────────────────────────────────────
+  const nextPINumber = useCallback(() => {
+    const existing = pis.map(p=>{ const m=p.pi_number?.match(/\/(\d+)\//); return m?parseInt(m[1]):0; });
+    const maxNum = existing.length>0?Math.max(...existing):0;
+    const fy = targets.find(t=>t.fy_label===selectedFY)||targets[0];
+    const fyShort = fy?fy.fy_label.replace('FY ','').split('-').map(y=>y.slice(2)).join('-'):'25-26';
+    return `${COMPANY.short}/PI/${String(maxNum+1).padStart(4,'0')}/${fyShort}`;
+  },[pis,targets,selectedFY]);
+
+  const addPI = async () => {
+    if (!piForm.pi_number||!piForm.customer_id||!piForm.pi_date||!piForm.total_amount) { showToast('Fill PI number, customer, date, total amount'); return; }
+    setSaving(true);
+    const {error}=await supabase.from('proforma_invoices').insert([{
+      pi_number:piForm.pi_number.trim(), po_id:piForm.po_id||null,
+      customer_id:Number(piForm.customer_id), pi_date:piForm.pi_date,
+      amount:Number(piForm.amount||0), gst_amount:Number(piForm.gst_amount||0),
+      total_amount:Number(piForm.total_amount), advance_due:Number(piForm.advance_due||piForm.total_amount),
+      advance_received:Number(piForm.advance_received||0), advance_date:piForm.advance_date||null,
+      payment_terms:piForm.payment_terms, status:piForm.status, notes:piForm.notes
+    }]);
+    if (error) showToast('Error: '+error.message);
+    else { showToast('PI added ✓'); setPiForm({pi_number:'',po_id:'',customer_id:'',pi_date:'',amount:'',gst_amount:'',total_amount:'',advance_due:'',advance_received:'',advance_date:'',payment_terms:'100% Advance against PI',status:'Pending',notes:''}); await fetchAll(); }
+    setSaving(false);
+  };
+
+  const updatePIField = async (id, field, value) => {
+    const updates = {[field]: value};
+    // Auto-update status based on amounts
+    if (field==='advance_received') {
+      const pi = pis.find(p=>p.id===id);
+      if (pi) {
+        const received = Number(value);
+        const due = Number(pi.advance_due);
+        updates.status = received<=0?'Pending':received>=due?'Paid':'Partially Paid';
+      }
+    }
+    await supabase.from('proforma_invoices').update(updates).eq('id',id);
+    await fetchAll();
+  };
+
+  const deletePI = async (id) => {
+    setSaving(true);
+    await supabase.from('proforma_invoices').delete().eq('id',id);
+    showToast('PI deleted'); await fetchAll(); setSaving(false);
+  };
+
+  // ── Delivery Sites CRUD ───────────────────────────────────────────────────
+  const addSite = async () => {
+    if (!siteForm.po_id||!siteForm.site_name||!siteForm.qty) { showToast('Fill PO, site name and qty'); return; }
+    // Validate total qty
+    const po = pos.find(p=>p.id===siteForm.po_id);
+    const existingSiteQty = sites.filter(s=>s.po_id===siteForm.po_id).reduce((s,x)=>s+x.qty,0);
+    if (existingSiteQty+Number(siteForm.qty)>Number(po?.qty||0)) { showToast(`⛔ Total site qty (${existingSiteQty+Number(siteForm.qty)}) exceeds PO qty (${po?.qty})`); return; }
+    setSaving(true);
+    const {error}=await supabase.from('delivery_sites').insert([{...siteForm,qty:Number(siteForm.qty)}]);
+    if (error) showToast('Error: '+error.message);
+    else { showToast('Delivery site added ✓'); setSiteForm({po_id:'',site_name:'',address:'',gstin:'',contact_name:'',phone:'',qty:'',notes:''}); await fetchAll(); }
+    setSaving(false);
+  };
+
+  const deleteSite = async (id) => {
+    setSaving(true);
+    await supabase.from('delivery_sites').delete().eq('id',id);
+    showToast('Site removed'); await fetchAll(); setSaving(false);
+  };
+
+  // ── Payment Receipts CRUD ─────────────────────────────────────────────────
+  const addReceipt = async () => {
+    if (!receiptForm.customer_id||!receiptForm.receipt_date||!receiptForm.amount) { showToast('Fill customer, date and amount'); return; }
+    setSaving(true);
+    const {error}=await supabase.from('payment_receipts').insert([{
+      receipt_no:receiptForm.receipt_no||null, customer_id:Number(receiptForm.customer_id),
+      po_id:receiptForm.po_id||null, receipt_date:receiptForm.receipt_date,
+      amount:Number(receiptForm.amount), payment_mode:receiptForm.payment_mode,
+      reference:receiptForm.reference||null, notes:receiptForm.notes||null
+    }]);
+    if (error) showToast('Error: '+error.message);
+    else { showToast('Receipt logged ✓'); setReceiptForm({receipt_no:'',customer_id:'',po_id:'',receipt_date:'',amount:'',payment_mode:'Bank Transfer',reference:'',notes:''}); await fetchAll(); }
+    setSaving(false);
+  };
+
+  const deleteReceipt = async (id) => {
+    setSaving(true);
+    await supabase.from('payment_receipts').delete().eq('id',id);
+    showToast('Receipt deleted'); await fetchAll(); setSaving(false);
+  };
+
+  // ── Per-PO financial helper (based on DELIVERED qty) ─────────────────────
+  // deliveredQty = sum of all delivery_entries for that PO
+  // invoicedAmt  = deliveredQty × unit_price − discount_prorated + GST
+  // balanceDue   = invoicedAmt − advance (floor 0)
+  const poFinancials = useCallback((p) => {
+    const deliveredQty = deliveries.filter(d=>d.po_id===p.id).reduce((s,d)=>s+d.qty_delivered, 0);
+    const orderedQty   = p.qty || 0;
+    const unitPrice    = Number(p.unit_price) || 0;
+    const discountAmt  = Number(p.discount_amount) || 0;
+    const gstRate      = settings.gst_rate_sales || 12;
+    const advance      = Number(p.advance) || 0;
+
+    // Gross ordered
+    const orderedGross = orderedQty * unitPrice;
+    // Pro-rata discount on delivered portion
+    const discountDelivered = orderedGross > 0 ? (deliveredQty / orderedQty) * discountAmt : 0;
+    const deliveredGross    = deliveredQty * unitPrice;
+    const deliveredNetTax   = deliveredGross - discountDelivered;
+    const deliveredGst      = deliveredNetTax * (gstRate / 100);
+    const invoicedAmt       = deliveredNetTax + deliveredGst;
+    const balanceDue        = Math.max(0, invoicedAmt - advance);
+
+    // Full order values (for reference / ordered column)
+    const orderedDiscount   = discountAmt;
+    const orderedNetTax     = orderedGross - orderedDiscount;
+    const orderedGst        = orderedNetTax * (gstRate / 100);
+    const orderedTotal      = orderedNetTax + orderedGst;
+    const balQty            = orderedQty - deliveredQty;
+
+    return { deliveredQty, orderedQty, balQty, unitPrice, orderedGross, orderedDiscount, orderedNetTax, orderedGst, orderedTotal, deliveredGross, discountDelivered, deliveredNetTax, deliveredGst, invoicedAmt, advance, balanceDue };
+  }, [deliveries, settings]);
+
+
   const analytics = useMemo(()=>{
     const totalSalesGross  = pos.reduce((s,p)=>s+p.qty*p.unit_price,0);
     const totalUnits       = pos.reduce((s,p)=>s+p.qty,0);
@@ -428,7 +593,7 @@ export default function DashboardPage() {
     const totalPurchCost   = pos.reduce((s,p)=>s+p.qty*Number(p.purchase_price),0)+totalFOCCost;
     const totalBizExp      = bizExp.reduce((s,e)=>s+Number(e.total_amount),0);
     const totalProfit      = totalNetSales-totalPurchCost-totalBizExp;
-    const pendingAdvance   = pos.filter(p=>p.status!=='Delivered / Fulfilled').reduce((s,p)=>s+Math.max(0,p.qty*p.unit_price-p.advance),0);
+    const pendingAdvance   = pos.filter(p=>p.status!=='Delivered / Fulfilled').reduce((s,p)=>s+poFinancials(p).balanceDue,0);
     const avgSP            = totalUnits>0?totalNetSales/totalUnits:0;
     const unfulfilled      = pos.filter(p=>p.status!=='Delivered / Fulfilled');
 
@@ -451,12 +616,13 @@ export default function DashboardPage() {
       const avgPP=(totalQty+focUnits)>0?purchCost/(totalQty+focUnits):0;
       const margin=netSales>0?(profit/netSales)*100:0;
       const advance=cPOs.reduce((s,p)=>s+Number(p.advance),0);
-      const pending=cPOs.filter(p=>p.status!=='Delivered / Fulfilled').reduce((s,p)=>s+Math.max(0,p.qty*p.unit_price-p.advance),0);
+      // Pending balance based on delivered qty
+      const pending=cPOs.filter(p=>p.status!=='Delivered / Fulfilled').reduce((s,p)=>s+poFinancials(p).balanceDue,0);
       return {...cust,grossSales,totalQty,cnVal,focUnits,focCost,netSales,purchCost,profit,avgSP:avgSP2,avgPP,margin,advance,pending,atRisk:totalQty>0&&avgSP2<avgPP};
     });
 
     return {totalSalesGross,totalUnits,totalAdvances,totalCNValue,totalFOCCost,totalNetSales,totalPurchCost,totalBizExp,totalProfit,pendingAdvance,avgSP,perCustomer,unfulfilled};
-  },[customers,pos,cns,bizExp]);
+  },[customers,pos,cns,bizExp,poFinancials]);
 
   // ── Biz expense analytics ─────────────────────────────────────────────────
   const bizExpAnalytics = useMemo(()=>{
@@ -585,29 +751,32 @@ export default function DashboardPage() {
   },[sim,analytics,settings]);
 
   // ── Styles ────────────────────────────────────────────────────────────────
-  const inp  = {width:'100%',background:'#0f172a',border:'1px solid #334155',borderRadius:8,padding:'10px 12px',color:'#e2e8f0',fontSize:13,fontFamily:"'DM Sans',sans-serif",outline:'none'};
-  const lbl  = {display:'block',fontSize:11,fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:'0.1em',color:'#64748b',marginBottom:5};
-  const card = {background:'#0f172a',border:'1px solid #1e293b',borderRadius:16};
-  const btn  = (d,bg='#f59e0b',tc='#0a0e1a')=>({background:bg,color:tc,fontWeight:700,border:'none',borderRadius:8,padding:'11px 20px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:12,opacity:d?0.6:1,whiteSpace:'nowrap'});
+  const inp  = {width:'100%',background:'#08090f',border:'1px solid #1a1a2e',borderRadius:2,padding:'9px 12px',color:'#e8e8ed',fontSize:12,fontFamily:"'Noto Sans JP',sans-serif",outline:'none'};
+  const lbl  = {display:'block',fontSize:9,fontFamily:"'DM Mono',monospace",textTransform:'uppercase',letterSpacing:'0.14em',color:'#3a3a5a',marginBottom:5};
+  const card = {background:'#0d0e18',border:'1px solid #1a1a2e',borderRadius:4};
+  const btn  = (d,bg='#c8a96e',tc='#08090f')=>({background:bg,color:tc,fontWeight:700,border:'none',borderRadius:2,padding:'10px 18px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:11,opacity:d?0.5:1,whiteSpace:'nowrap',letterSpacing:'.06em'});
   const g4   = {display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14};
 
   const navItems=[
-    {key:'dashboard',label:'📊 Overview'},
-    {key:'cashflow', label:'💰 Cash Flow'},
-    {key:'target',   label:'🎯 Target'},
-    {key:'aging',    label:'📅 Aging'},
-    {key:'gst',      label:'🧾 GST'},
-    {key:'pipeline', label:'📦 Pipeline'},
-    {key:'expenses', label:'💸 Expenses'},
+    {key:'dashboard',  label:'📊 Overview'},
+    {key:'cashflow',   label:'💰 Cash Flow'},
+    {key:'target',     label:'🎯 Target'},
+    {key:'aging',      label:'📅 Aging'},
+    {key:'gst',        label:'🧾 GST'},
+    {key:'pipeline',   label:'📦 Pipeline'},
+    {key:'expenses',   label:'💸 Expenses'},
     {key:'unfulfilled',label:'⏳ Pending'},
-    {key:'pos',      label:'📋 Orders'},
-    {key:'deliveries',label:'🚚 Deliveries'},
-    {key:'cns',      label:'🔖 CN/FOC'},
-    {key:'customers',label:'👤 Customers'},
-    {key:'vendors',  label:'🏪 Vendors'},
-    {key:'simulator',label:'🔮 Simulator'},
-    {key:'mfrcn',    label:'🏭 Mfr. CNs'},
-    {key:'settings', label:'⚙️ Settings'},
+    {key:'pos',        label:'📋 Orders'},
+    {key:'deliveries', label:'🚚 Deliveries'},
+    {key:'sites',      label:'📍 Sites'},
+    {key:'cns',        label:'🔖 CN/FOC'},
+    {key:'pi',         label:'📄 Proforma'},
+    {key:'ledger',     label:'📒 Ledger'},
+    {key:'customers',  label:'👤 Customers'},
+    {key:'vendors',    label:'🏪 Vendors'},
+    {key:'simulator',  label:'🔮 Simulator'},
+    {key:'mfrcn',      label:'🏭 Mfr. CNs'},
+    {key:'settings',   label:'⚙️ Settings'},
   ];
 
   const FYSelector = () => (
@@ -626,24 +795,27 @@ export default function DashboardPage() {
   );
 
   return (
-    <div style={{fontFamily:"'DM Sans','Segoe UI',sans-serif",background:'#0a0e1a',minHeight:'100vh',color:'#e2e8f0'}}>
+    <div style={{fontFamily:"'Noto Sans JP','DM Sans','Segoe UI',sans-serif",background:'#08090f',minHeight:'100vh',color:'#e8e8ed'}}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=DM+Mono:wght@400;500&display=swap');
         *{box-sizing:border-box;}
-        ::-webkit-scrollbar{width:6px;} ::-webkit-scrollbar-track{background:#0a0e1a;} ::-webkit-scrollbar-thumb{background:#334155;border-radius:3px;}
-        .kc{background:linear-gradient(135deg,#1e293b 0%,#0f172a 100%);border:1px solid #334155;border-radius:14px;padding:18px;transition:transform .2s,box-shadow .2s;}
-        .kc:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,.4);}
-        .nb{background:transparent;border:none;cursor:pointer;padding:6px 10px;border-radius:6px;font-size:11px;font-family:'DM Sans',sans-serif;color:#94a3b8;transition:all .15s;white-space:nowrap;}
-        .nb.active{background:#1e293b;color:#f59e0b;border:1px solid #334155;}
-        .nb:hover:not(.active){background:#1e293b50;color:#e2e8f0;}
+        ::-webkit-scrollbar{width:4px;height:4px;} ::-webkit-scrollbar-track{background:#08090f;} ::-webkit-scrollbar-thumb{background:#2a2a3a;border-radius:2px;}
+        .kc{background:#0d0e18;border:1px solid #1a1a2e;border-radius:4px;padding:18px;transition:border-color .2s;}
+        .kc:hover{border-color:#c8a96e;}
+        .nb{background:transparent;border:none;cursor:pointer;padding:5px 10px;border-radius:2px;font-size:11px;font-family:'DM Mono',monospace;color:#5a5a7a;transition:all .15s;white-space:nowrap;letter-spacing:.04em;}
+        .nb.active{background:#1a1a2e;color:#c8a96e;border-bottom:2px solid #c8a96e;}
+        .nb:hover:not(.active){color:#e8e8ed;}
         table{width:100%;border-collapse:collapse;}
-        th{font-size:10px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.08em;color:#64748b;padding:8px 12px;text-align:left;border-bottom:1px solid #1e293b;}
-        td{font-size:12px;padding:8px 12px;border-bottom:1px solid #1e293b40;vertical-align:middle;}
-        tr:hover td{background:#1e293b50;}
-        .sec{font-size:10px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.12em;color:#64748b;margin-bottom:12px;}
-        select option{background:#1e293b;}
-        input:focus,select:focus{border-color:#f59e0b!important;outline:none;}
-        .chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-family:'DM Mono',monospace;padding:2px 8px;border-radius:20px;border:1px solid;}
+        th{font-size:9px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.12em;color:#3a3a5a;padding:8px 12px;text-align:left;border-bottom:1px solid #1a1a2e;}
+        td{font-size:12px;padding:8px 12px;border-bottom:1px solid #1a1a2e30;vertical-align:middle;}
+        tr:hover td{background:#0d0e1880;}
+        .sec{font-size:9px;font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.16em;color:#3a3a5a;margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid #1a1a2e;}
+        select option{background:#0d0e18;}
+        input:focus,select:focus{border-color:#c8a96e!important;outline:none;}
+        .chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-family:'DM Mono',monospace;padding:2px 8px;border-radius:2px;border:1px solid;}
+        .search-bar{width:100%;background:#08090f;border:1px solid #1a1a2e;border-radius:2px;padding:7px 12px;color:#e8e8ed;font-size:12px;font-family:'Noto Sans JP',sans-serif;outline:none;}
+        .search-bar:focus{border-color:#c8a96e;}
+        .search-bar::placeholder{color:#3a3a5a;}
       `}</style>
 
       {toast&&<div style={{position:'fixed',top:20,right:20,background:'#052e16',border:'1px solid #14532d',color:'#34d399',padding:'11px 18px',borderRadius:10,fontFamily:"'DM Mono',monospace",fontSize:12,zIndex:9999,boxShadow:'0 8px 24px rgba(0,0,0,.5)'}}>{toast}</div>}
@@ -668,18 +840,24 @@ export default function DashboardPage() {
       )}
 
       {/* ── Header ── */}
-      <div style={{background:'linear-gradient(90deg,#0f172a,#1e293b)',borderBottom:'1px solid #1e293b',padding:'0 14px'}}>
-        <div style={{display:'flex',alignItems:'center',gap:10,height:50,flexWrap:'nowrap',overflowX:'auto'}}>
-          <div style={{fontSize:18,flexShrink:0}}>☀️</div>
-          <div style={{flexShrink:0}}>
-            <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'#f59e0b',letterSpacing:'0.1em'}}>SOLAR INVERTER ERP</div>
+      <div style={{background:'#0d0e18',borderBottom:'1px solid #1a1a2e',padding:'0 16px'}}>
+        <div style={{display:'flex',alignItems:'center',gap:12,height:48,flexWrap:'nowrap',overflowX:'auto'}}>
+          {/* Logo mark — minimalist red circle (Japanese torii inspired) */}
+          <div style={{flexShrink:0,display:'flex',alignItems:'center',gap:8,paddingRight:12,borderRight:'1px solid #1a1a2e'}}>
+            <div style={{width:24,height:24,borderRadius:'50%',background:'transparent',border:'2px solid #c8a96e',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              <div style={{width:8,height:8,borderRadius:'50%',background:'#c8a96e'}}/>
+            </div>
+            <div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#c8a96e',letterSpacing:'0.08em',fontWeight:500}}>{COMPANY.short}</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:'#3a3a5a',letterSpacing:'0.06em'}}>INVERTER ERP</div>
+            </div>
           </div>
-          <div style={{display:'flex',gap:1,alignItems:'center',flexWrap:'nowrap',marginLeft:8}}>
+          <div style={{display:'flex',gap:0,alignItems:'center',flexWrap:'nowrap'}}>
             {navItems.map(n=><button key={n.key} className={`nb ${view===n.key?'active':''}`} onClick={()=>setView(n.key)}>{n.label}</button>)}
           </div>
           <div style={{marginLeft:'auto',display:'flex',gap:8,alignItems:'center',flexShrink:0}}>
-            <div style={{fontSize:10,color:'#475569',fontFamily:"'DM Mono',monospace"}}>{user?.email}</div>
-            <button onClick={signOut} style={{background:'transparent',border:'1px solid #334155',color:'#64748b',borderRadius:6,padding:'4px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>Out</button>
+            <div style={{fontSize:9,color:'#3a3a5a',fontFamily:"'DM Mono',monospace"}}>{user?.email}</div>
+            <button onClick={signOut} style={{background:'transparent',border:'1px solid #1a1a2e',color:'#3a3a5a',borderRadius:2,padding:'4px 8px',cursor:'pointer',fontSize:9,fontFamily:"'DM Mono',monospace",letterSpacing:'.06em'}}>SIGN OUT</button>
           </div>
         </div>
       </div>
@@ -689,7 +867,11 @@ export default function DashboardPage() {
 
         {/* ════ OVERVIEW ════ */}
         {view==='dashboard'&&(<div>
-          <div className="sec">Executive Overview — All Time</div>
+          <div style={{marginBottom:20,paddingBottom:14,borderBottom:'1px solid #1a1a2e'}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#3a3a5a',letterSpacing:'.16em',marginBottom:4}}>BASILSPHERE INNOVATIONS PRIVATE LIMITED</div>
+            <div style={{fontFamily:"'Noto Sans JP',sans-serif",fontSize:20,fontWeight:300,color:'#e8e8ed',letterSpacing:'.02em'}}>Executive Overview</div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'#3a3a5a',marginTop:3}}>GSTIN: {COMPANY.gstin} · {COMPANY.address}</div>
+          </div>
           <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:24}}>
             <KPICard label="Gross Sales" val={fmtL(analytics.totalSalesGross)} sub={`${fmt(analytics.totalUnits)} units`} color="#f59e0b"/>
             <KPICard label="Net Sales" val={fmtL(analytics.totalNetSales)} sub={`After CNs: −${fmtL(analytics.totalCNValue)}`} color="#38bdf8"/>
@@ -1102,9 +1284,15 @@ export default function DashboardPage() {
         {view==='pos'&&(<div>
           <div className="sec">All Purchase Orders</div>
           <div style={{...card,padding:18,marginBottom:16}}>
-            <div style={{fontSize:12,color:'#f59e0b',fontFamily:"'DM Mono',monospace",marginBottom:12}}>+ NEW PURCHASE ORDER</div>
+            <div style={{fontSize:11,color:'#c8a96e',fontFamily:"'DM Mono',monospace",marginBottom:12}}>+ NEW PURCHASE ORDER</div>
             <div style={{...g4,marginBottom:12}}>
-              <div><label style={lbl}>PO Number * <span style={{color:'#475569',fontSize:10,textTransform:'none',letterSpacing:0}}>(your customer's PO ref)</span></label><input style={inp} type="text" placeholder="e.g. CUST-PO-2024-001" value={poForm.po_id} onChange={e=>setPoForm({...poForm,po_id:e.target.value})}/></div>
+              <div>
+                <label style={lbl}>PO Number * <span style={{color:'#3a3a5a',fontSize:9,textTransform:'none',letterSpacing:0}}>(auto or manual)</span></label>
+                <div style={{display:'flex',gap:6}}>
+                  <input style={{...inp,flex:1}} type="text" placeholder={`${COMPANY.poPrefix}0001/25-26`} value={poForm.po_id} onChange={e=>setPoForm({...poForm,po_id:e.target.value})}/>
+                  <button type="button" onClick={()=>setPoForm({...poForm,po_id:nextPONumber()})} style={{...btn(false,'#1a1a2e','#c8a96e'),border:'1px solid #c8a96e',padding:'8px 10px',fontSize:10,flexShrink:0}}>AUTO</button>
+                </div>
+              </div>
               <div><label style={lbl}>Customer *</label><select style={inp} value={poForm.customer_id} onChange={e=>setPoForm({...poForm,customer_id:e.target.value})}><option value="">Select…</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
               <div><label style={lbl}>Delivery *</label><select style={inp} value={poForm.delivery_type} onChange={e=>{ const def=e.target.value==='DDP'?settings.default_purchase_price_ddp:settings.default_purchase_price_exw; setPoForm({...poForm,delivery_type:e.target.value,purchase_price:def}); }}><option value="DDP">DDP</option><option value="EXW">EXW</option></select></div>
               <div><label style={lbl}>Qty *</label><input style={inp} type="number" value={poForm.qty} onChange={e=>setPoForm({...poForm,qty:e.target.value})}/></div>
@@ -1145,40 +1333,35 @@ export default function DashboardPage() {
               <div style={{display:'flex',alignItems:'flex-end'}}><button onClick={addPO} disabled={saving} style={{...btn(saving),width:'100%',padding:'11px 0'}}>{saving?'Saving…':'ADD PO →'}</button></div>
             </div>
           </div>
+          {/* Search bar */}
+          <div style={{marginBottom:10}}>
+            <input className="search-bar" type="text" placeholder="🔍  Search PO number, customer name, vendor…" value={searchPO} onChange={e=>setSearchPO(e.target.value)}/>
+          </div>
           <div style={{...card,overflow:'auto'}}>
             <table>
-              <thead><tr>{['PO No','Customer','Type','Vendor','Qty','Ordered','Discount','Net Taxable','GST','Invoice Total','Advance','Bal Due','Delivered','Bal Qty','Date','Stage','Edit','Status'].map(h=><th key={h}>{h}</th>)}</tr></thead>
-              <tbody>{pos.map(p=>{ 
+              <thead><tr>{['PO No','Customer','Type','Vendor','Ordered Qty','Ordered Value','Discount','Delivered Qty','Bal Qty','Invoiced Amt','Advance','Balance Due','Date','Stage','Edit','Status'].map(h=><th key={h}>{h}</th>)}</tr></thead>
+              <tbody>{pos.filter(p=>{ if(!searchPO) return true; const q=searchPO.toLowerCase(); const c=customers.find(x=>x.id===p.customer_id); return p.id?.toLowerCase().includes(q)||c?.name?.toLowerCase().includes(q)||p.vendor_name?.toLowerCase().includes(q); }).map(p=>{ 
                 const cust=customers.find(c=>c.id===p.customer_id);
-                const gross=p.qty*p.unit_price;
-                const disc=Number(p.discount_amount||0);
-                const netTax=gross-disc;
-                const gstAmt=netTax*(settings.gst_rate_sales||12)/100;
-                const invTotal=netTax+gstAmt;
-                const bal=Math.max(0,invTotal-p.advance);
-                const poDeliveries=deliveries.filter(d=>d.po_id===p.id);
-                const deliveredQty=poDeliveries.reduce((s,d)=>s+d.qty_delivered,0);
-                const balQty=p.qty-deliveredQty;
+                const fin=poFinancials(p);
                 return (
                 <tr key={p.id}>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#f59e0b',whiteSpace:'nowrap'}}>{p.id}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#c8a96e',whiteSpace:'nowrap'}}>{p.id}</td>
                   <td style={{fontWeight:500}}>{cust?.name||'—'}</td>
-                  <td><span style={{fontSize:10,background:p.delivery_type==='DDP'?'#1e3a5f':'#1e3a2f',color:p.delivery_type==='DDP'?'#38bdf8':'#34d399',borderRadius:4,padding:'2px 5px',fontFamily:"'DM Mono',monospace"}}>{p.delivery_type}</span></td>
-                  <td style={{color:'#94a3b8',fontSize:11,whiteSpace:'nowrap'}}>{p.vendor_name||'—'}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace"}}>
-                    <input style={{...inp,width:70,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace"}} type="number" defaultValue={p.qty} onBlur={e=>{ if(Number(e.target.value)!==Number(p.qty)) updatePOField(p.id,'qty',e.target.value); }}/>
+                  <td><span style={{fontSize:10,background:p.delivery_type==='DDP'?'#1a2a3a':'#1a2a1a',color:p.delivery_type==='DDP'?'#7ab8d4':'#7ab87a',borderRadius:2,padding:'2px 6px',fontFamily:"'DM Mono',monospace"}}>{p.delivery_type}</span></td>
+                  <td style={{color:'#5a5a7a',fontSize:11,whiteSpace:'nowrap'}}>{p.vendor_name||'—'}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",textAlign:'center'}}>{fin.orderedQty}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#5a5a7a'}}>{fmtL(fin.orderedTotal)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#c47a7a'}}>{fin.orderedDiscount>0?`−${fmtL(fin.orderedDiscount)}`:'—'}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#7ab87a',fontWeight:600,textAlign:'center'}}>{fin.deliveredQty}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:fin.balQty>0?'#c8a050':'#7ab87a',fontWeight:600,textAlign:'center'}}>{fin.balQty}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#7ab8d4',fontWeight:600}}>
+                    {fmtL(fin.invoicedAmt)}
+                    {fin.deliveredQty<fin.orderedQty&&fin.deliveredQty>0&&<div style={{fontSize:9,color:'#3a3a5a',marginTop:1}}>of {fmtL(fin.orderedTotal)} ordered</div>}
                   </td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#94a3b8'}}>{fmtL(gross)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#f87171'}}>{disc>0?`−${fmtL(disc)}`:'—'}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#f59e0b',fontWeight:600}}>{fmtL(netTax)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#a78bfa'}}>{fmtL(gstAmt)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#38bdf8',fontWeight:600}}>{fmtL(invTotal)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#34d399'}}>
-                    <input style={{...inp,width:110,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace",color:'#34d399'}} type="number" defaultValue={p.advance} onBlur={e=>{ if(Number(e.target.value)!==Number(p.advance)) updatePOField(p.id,'advance',e.target.value); }}/>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#7ab87a'}}>
+                    <input style={{...inp,width:110,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace",color:'#7ab87a'}} type="number" defaultValue={p.advance} onBlur={e=>{ if(Number(e.target.value)!==Number(p.advance)) updatePOField(p.id,'advance',e.target.value); }}/>
                   </td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:bal>0?'#f87171':'#34d399',fontWeight:600}}>{fmtL(bal)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#34d399'}}>{deliveredQty}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:balQty>0?'#fb923c':'#34d399',fontWeight:600}}>{balQty}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:fin.balanceDue>0?'#c47a7a':'#7ab87a',fontWeight:700}}>{fmtL(fin.balanceDue)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#64748b',fontSize:10}}>{p.po_date}</td>
                   <td><StatusBadge s={p.status}/></td>
                   <td>
@@ -1340,10 +1523,13 @@ export default function DashboardPage() {
               <div style={{display:'flex',alignItems:'flex-end'}}><button onClick={addCustomer} disabled={saving} style={{...btn(saving),width:'100%',padding:'11px 0'}}>{saving?'Saving…':'ADD →'}</button></div>
             </div>
           </div>
+          <div style={{marginBottom:10}}>
+            <input className="search-bar" type="text" placeholder="🔍  Search customer name, code, GSTIN…" value={searchCust} onChange={e=>setSearchCust(e.target.value)}/>
+          </div>
           <div style={{...card,overflow:'auto'}}>
             <table>
               <thead><tr>{['Code','Name','GSTIN','Contact','Phone','Email','POs','Net Sales','Profit','Margin','Pending','Status',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
-              <tbody>{customers.map((c)=>{ const a=analytics.perCustomer.find(x=>x.id===c.id); return (
+              <tbody>{customers.filter(c=>{ if(!searchCust) return true; const q=searchCust.toLowerCase(); return c.name?.toLowerCase().includes(q)||c.customer_code?.toLowerCase().includes(q)||c.gstin?.toLowerCase().includes(q); }).map((c)=>{ const a=analytics.perCustomer.find(x=>x.id===c.id); return (
                 <tr key={c.id}>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#f59e0b',fontWeight:600}}>{c.customer_code||<span style={{color:'#334155',fontSize:10}}>no code</span>}</td>
                   <td style={{fontWeight:500}}>{c.name}</td>
@@ -1507,7 +1693,10 @@ export default function DashboardPage() {
         {view==='vendors'&&(<div>
           <div className="sec">Vendor Master</div>
           <div style={{...card,padding:20,marginBottom:16}}>
-            <div style={{fontSize:12,color:'#f59e0b',fontFamily:"'DM Mono',monospace",marginBottom:12}}>+ ADD VENDOR</div>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+              <div style={{fontSize:11,color:'#c8a96e',fontFamily:"'DM Mono',monospace"}}>+ ADD VENDOR</div>
+              <button onClick={()=>setVendorForm({name:MANUFACTURER.name,vendor_type:'Manufacturer',gstin:MANUFACTURER.gstin,contact_name:'',phone:'',email:'P.gandhi@wattpower.in',address:MANUFACTURER.address,notes:'Primary MSA manufacturer'})} style={{...btn(false,'#1a1a2e','#c8a96e'),border:'1px solid #1a1a2e',fontSize:9,padding:'5px 10px'}}>⚡ FILL WATTPOWER</button>
+            </div>
             <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:10}}>
               <div><label style={lbl}>Vendor Name *</label><input style={inp} type="text" placeholder="Company name" value={vendorForm.name} onChange={e=>setVendorForm({...vendorForm,name:e.target.value})}/></div>
               <div><label style={lbl}>Type *</label><select style={inp} value={vendorForm.vendor_type} onChange={e=>setVendorForm({...vendorForm,vendor_type:e.target.value})}>{VENDOR_TYPES.map(t=><option key={t}>{t}</option>)}</select></div>
@@ -1622,6 +1811,254 @@ export default function DashboardPage() {
               {poDeliveries.length===0&&<div style={{fontSize:11,color:'#475569'}}>No deliveries logged yet.</div>}
             </div>;
           })}
+        </div>)}
+
+        {/* ════ PROFORMA INVOICES ════ */}
+        {view==='pi'&&(<div>
+          <div className="sec">Proforma Invoice Tracker</div>
+          {/* KPIs */}
+          {(()=>{
+            const total=pis.reduce((s,p)=>s+Number(p.total_amount),0);
+            const received=pis.reduce((s,p)=>s+Number(p.advance_received),0);
+            const pending=pis.filter(p=>p.status!=='Paid'&&p.status!=='Cancelled').reduce((s,p)=>s+Math.max(0,Number(p.advance_due)-Number(p.advance_received)),0);
+            const paid=pis.filter(p=>p.status==='Paid').length;
+            return <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
+              <KPICard label="Total PI Value" val={fmtL(total)} color="#c8a96e"/>
+              <KPICard label="Advance Received" val={fmtL(received)} color="#7ab87a"/>
+              <KPICard label="Advance Pending" val={fmtL(pending)} color={pending>0?'#c47a7a':'#7ab87a'}/>
+              <KPICard label="PIs Fully Paid" val={`${paid} / ${pis.length}`} color="#7ab8d4"/>
+            </div>;
+          })()}
+          {/* Add PI form */}
+          <div style={{...card,padding:20,marginBottom:16}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
+              <div style={{fontSize:11,color:'#c8a96e',fontFamily:"'DM Mono',monospace"}}>+ NEW PROFORMA INVOICE</div>
+              <button onClick={()=>setPiForm(f=>({...f,pi_number:nextPINumber()}))} style={{...btn(false,'#1a1a2e','#c8a96e'),border:'1px solid #1a1a2e',fontSize:9,padding:'5px 10px'}}>AUTO NUMBER</button>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:12}}>
+              <div><label style={lbl}>PI Number *</label><input style={inp} type="text" placeholder="BSIPL/PI/0001/25-26" value={piForm.pi_number} onChange={e=>setPiForm({...piForm,pi_number:e.target.value})}/></div>
+              <div><label style={lbl}>Customer *</label><select style={inp} value={piForm.customer_id} onChange={e=>setPiForm({...piForm,customer_id:e.target.value})}><option value="">Select…</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+              <div><label style={lbl}>Linked PO</label><select style={inp} value={piForm.po_id} onChange={e=>setPiForm({...piForm,po_id:e.target.value})}><option value="">None</option>{pos.filter(p=>!piForm.customer_id||p.customer_id===Number(piForm.customer_id)).map(p=><option key={p.id} value={p.id}>{p.id}</option>)}</select></div>
+              <div><label style={lbl}>PI Date *</label><input style={inp} type="date" value={piForm.pi_date} onChange={e=>setPiForm({...piForm,pi_date:e.target.value})}/></div>
+              <div><label style={lbl}>Taxable Amount (₹)</label><input style={inp} type="number" value={piForm.amount} onChange={e=>{ const a=Number(e.target.value); const g=a*(settings.gst_rate_sales||12)/100; setPiForm({...piForm,amount:e.target.value,gst_amount:g.toFixed(2),total_amount:(a+g).toFixed(2),advance_due:(a+g).toFixed(2)}); }}/></div>
+              <div><label style={lbl}>GST ({settings.gst_rate_sales||12}%)</label><input style={inp} type="number" value={piForm.gst_amount} onChange={e=>setPiForm({...piForm,gst_amount:e.target.value,total_amount:(Number(piForm.amount)+Number(e.target.value)).toFixed(2)})}/></div>
+              <div><label style={lbl}>Total Amount (₹) *</label><input style={{...inp,borderColor:'#c8a96e'}} type="number" value={piForm.total_amount} onChange={e=>setPiForm({...piForm,total_amount:e.target.value,advance_due:e.target.value})}/></div>
+              <div><label style={lbl}>Advance Due (₹)</label><input style={inp} type="number" value={piForm.advance_due} onChange={e=>setPiForm({...piForm,advance_due:e.target.value})}/></div>
+              <div><label style={lbl}>Advance Received (₹)</label><input style={inp} type="number" value={piForm.advance_received} onChange={e=>setPiForm({...piForm,advance_received:e.target.value})}/></div>
+              <div><label style={lbl}>Advance Date</label><input style={inp} type="date" value={piForm.advance_date} onChange={e=>setPiForm({...piForm,advance_date:e.target.value})}/></div>
+              <div><label style={lbl}>Payment Terms</label><input style={inp} type="text" value={piForm.payment_terms} onChange={e=>setPiForm({...piForm,payment_terms:e.target.value})}/></div>
+              <div style={{display:'flex',alignItems:'flex-end'}}><button onClick={addPI} disabled={saving} style={{...btn(saving),width:'100%',padding:'10px'}}>{saving?'Saving…':'ADD PI →'}</button></div>
+            </div>
+          </div>
+          {/* PI table */}
+          <div style={{...card,overflow:'auto'}}>
+            <table>
+              <thead><tr>{['PI Number','Customer','Linked PO','Date','Taxable','GST','Total','Advance Due','Received','Balance','Status',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
+              <tbody>{pis.length===0
+                ?<tr><td colSpan={12} style={{textAlign:'center',color:'#3a3a5a',padding:24}}>No proforma invoices yet.</td></tr>
+                :pis.map(pi=>{
+                  const cust=customers.find(c=>c.id===pi.customer_id);
+                  const bal=Math.max(0,Number(pi.advance_due)-Number(pi.advance_received));
+                  const sc={'Pending':'#c8a96e','Partially Paid':'#7ab8d4','Paid':'#7ab87a','Cancelled':'#5a5a7a'};
+                  return <tr key={pi.id}>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#c8a96e',whiteSpace:'nowrap'}}>{pi.pi_number}</td>
+                    <td style={{fontWeight:500}}>{cust?.name||'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#5a5a7a',fontSize:11}}>{pi.po_id||'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#5a5a7a'}}>{pi.pi_date}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtL(pi.amount)}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#7a7ab8'}}>{fmtL(pi.gst_amount)}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#7ab8d4',fontWeight:600}}>{fmtL(pi.total_amount)}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtL(pi.advance_due)}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace"}}>
+                      <input style={{...inp,width:120,fontSize:11,padding:'3px 8px',color:'#7ab87a'}} type="number" defaultValue={pi.advance_received}
+                        onBlur={e=>{ if(Number(e.target.value)!==Number(pi.advance_received)) updatePIField(pi.id,'advance_received',Number(e.target.value)); }}/>
+                    </td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:bal>0?'#c47a7a':'#7ab87a',fontWeight:700}}>{fmtL(bal)}</td>
+                    <td><span className="chip" style={{color:sc[pi.status],borderColor:sc[pi.status]+'40',background:sc[pi.status]+'15'}}>{pi.status}</span></td>
+                    <td><button onClick={()=>askDelete('pi',pi.id,`PI ${pi.pi_number}`,()=>deletePI(pi.id))} style={{background:'#1a1a2e',border:'1px solid #2a2a3a',color:'#c47a7a',borderRadius:2,padding:'4px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
+                  </tr>;
+                })}</tbody>
+            </table>
+          </div>
+        </div>)}
+
+        {/* ════ DELIVERY SITES ════ */}
+        {view==='sites'&&(<div>
+          <div className="sec">Delivery Sites (Ship-To Addresses)</div>
+          <div style={{...card,padding:20,marginBottom:16}}>
+            <div style={{fontSize:11,color:'#c8a96e',fontFamily:"'DM Mono',monospace",marginBottom:12}}>+ ADD DELIVERY SITE</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:10}}>
+              <div><label style={lbl}>Purchase Order *</label>
+                <select style={inp} value={siteForm.po_id} onChange={e=>setSiteForm({...siteForm,po_id:e.target.value})}>
+                  <option value="">Select PO…</option>
+                  {pos.map(p=>{ const c=customers.find(x=>x.id===p.customer_id); return <option key={p.id} value={p.id}>{p.id} — {c?.name} ({p.qty} units)</option>; })}
+                </select>
+              </div>
+              <div><label style={lbl}>Site Name *</label><input style={inp} type="text" placeholder="e.g. Shreeji Yarn Mills" value={siteForm.site_name} onChange={e=>setSiteForm({...siteForm,site_name:e.target.value})}/></div>
+              <div><label style={lbl}>Qty *</label><input style={inp} type="number" value={siteForm.qty} onChange={e=>setSiteForm({...siteForm,qty:e.target.value})}/></div>
+              <div><label style={lbl}>GSTIN</label><input style={inp} type="text" value={siteForm.gstin} onChange={e=>setSiteForm({...siteForm,gstin:e.target.value})}/></div>
+              <div><label style={lbl}>Contact</label><input style={inp} type="text" value={siteForm.contact_name} onChange={e=>setSiteForm({...siteForm,contact_name:e.target.value})}/></div>
+              <div><label style={lbl}>Phone</label><input style={inp} type="text" value={siteForm.phone} onChange={e=>setSiteForm({...siteForm,phone:e.target.value})}/></div>
+              <div style={{gridColumn:'span 2'}}><label style={lbl}>Address</label><input style={inp} type="text" value={siteForm.address} onChange={e=>setSiteForm({...siteForm,address:e.target.value})}/></div>
+              <div style={{gridColumn:'span 3'}}><label style={lbl}>Notes</label><input style={inp} type="text" value={siteForm.notes} onChange={e=>setSiteForm({...siteForm,notes:e.target.value})}/></div>
+              <div style={{display:'flex',alignItems:'flex-end'}}><button onClick={addSite} disabled={saving} style={{...btn(saving),width:'100%',padding:'10px'}}>{saving?'Saving…':'ADD →'}</button></div>
+            </div>
+          </div>
+          {/* Group sites by PO */}
+          {pos.filter(p=>sites.some(s=>s.po_id===p.id)).map(p=>{
+            const cust=customers.find(c=>c.id===p.customer_id);
+            const poSites=sites.filter(s=>s.po_id===p.id);
+            const allocatedQty=poSites.reduce((s,x)=>s+x.qty,0);
+            const unallocated=p.qty-allocatedQty;
+            return <div key={p.id} style={{...card,marginBottom:12,padding:16}}>
+              <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:12}}>
+                <div style={{fontFamily:"'DM Mono',monospace",color:'#c8a96e',fontWeight:600}}>{p.id}</div>
+                <div style={{fontWeight:500}}>{cust?.name||'—'}</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#5a5a7a'}}>Total: <strong style={{color:'#e8e8ed'}}>{p.qty} units</strong></div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#5a5a7a'}}>Allocated: <strong style={{color:'#7ab87a'}}>{allocatedQty}</strong></div>
+                {unallocated>0&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#c8a96e'}}>Unallocated: <strong>{unallocated}</strong></div>}
+              </div>
+              <table>
+                <thead><tr>{['Site Name','Qty','GSTIN','Contact','Phone','Address','Notes',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
+                <tbody>{poSites.map(s=><tr key={s.id}>
+                  <td style={{fontWeight:500,color:'#7ab8d4'}}>{s.site_name}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#c8a96e',fontWeight:600}}>{s.qty}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#5a5a7a',fontSize:10}}>{s.gstin||'—'}</td>
+                  <td style={{color:'#8a8aaa',fontSize:11}}>{s.contact_name||'—'}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#8a8aaa',fontSize:11}}>{s.phone||'—'}</td>
+                  <td style={{color:'#8a8aaa',fontSize:11,maxWidth:200}}>{s.address||'—'}</td>
+                  <td style={{color:'#5a5a7a',fontSize:11}}>{s.notes||'—'}</td>
+                  <td><button onClick={()=>askDelete('site',s.id,`Site: ${s.site_name}`,()=>deleteSite(s.id))} style={{background:'#1a1a2e',border:'1px solid #2a2a3a',color:'#c47a7a',borderRadius:2,padding:'3px 7px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
+                </tr>)}</tbody>
+              </table>
+            </div>;
+          })}
+          {!pos.some(p=>sites.some(s=>s.po_id===p.id))&&<div style={{textAlign:'center',color:'#3a3a5a',padding:32,fontSize:13}}>No delivery sites added yet. Add your first site above.</div>}
+        </div>)}
+
+        {/* ════ CUSTOMER LEDGER ════ */}
+        {view==='ledger'&&(<div>
+          <div className="sec">Customer Account Ledger</div>
+          {/* Customer selector */}
+          <div style={{...card,padding:16,marginBottom:16}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr auto',gap:12,alignItems:'flex-end'}}>
+              <div>
+                <label style={lbl}>Select Customer</label>
+                <select style={inp} value={ledgerCust||''} onChange={e=>setLedgerCust(Number(e.target.value)||null)}>
+                  <option value="">Choose a customer…</option>
+                  {customers.map(c=><option key={c.id} value={c.id}>{c.customer_code?`[${c.customer_code}] `:''}{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={lbl}>Log Payment Receipt</label>
+                <div style={{display:'flex',gap:8}}>
+                  <input style={{...inp,flex:1}} type="number" placeholder="Amount (₹)" value={receiptForm.amount} onChange={e=>setReceiptForm({...receiptForm,amount:e.target.value,customer_id:ledgerCust||''})}/>
+                  <input style={{...inp,flex:1}} type="date" value={receiptForm.receipt_date} onChange={e=>setReceiptForm({...receiptForm,receipt_date:e.target.value})}/>
+                </div>
+              </div>
+              <button onClick={()=>{ if(!ledgerCust){showToast('Select a customer first');return;} setReceiptForm(f=>({...f,customer_id:ledgerCust})); addReceipt(); }} disabled={saving} style={{...btn(saving,'#7ab87a','#08090f'),padding:'10px 16px'}}>{saving?'…':'LOG RECEIPT →'}</button>
+            </div>
+          </div>
+
+          {ledgerCust&&(()=>{
+            const cust=customers.find(c=>c.id===ledgerCust);
+            const custPOs=pos.filter(p=>p.customer_id===ledgerCust);
+            const custReceipts=receipts.filter(r=>r.customer_id===ledgerCust);
+            const custCNs=cns.filter(c=>c.customer_id===ledgerCust);
+
+            // Build ledger entries: PO invoices + payments + CNs, sorted by date
+            const entries=[];
+            custPOs.forEach(p=>{
+              const fin=poFinancials(p);
+              if(fin.invoicedAmt>0) entries.push({date:p.po_date,type:'Invoice',ref:p.id,description:`Invoice — ${fin.deliveredQty} units`,debit:fin.invoicedAmt,credit:0,po:p});
+              // Advance already on PO counts as receipt
+              if(p.advance>0) entries.push({date:p.po_date,type:'Advance',ref:p.id,description:`Advance received`,debit:0,credit:Number(p.advance)});
+            });
+            custCNs.forEach(c=>{
+              if(c.type==='CNNote') entries.push({date:c.cn_date,type:'Credit Note',ref:`CN-${c.id}`,description:c.note||'Credit Note',debit:0,credit:Number(c.amount),cn:c});
+              if(c.type==='FOC') { const po=pos.find(p=>p.id===c.po_id); entries.push({date:c.cn_date,type:'FOC',ref:`FOC-${c.id}`,description:`${c.foc_units} FOC units`,debit:0,credit:c.foc_units*Number(po?.purchase_price||0),cn:c}); }
+            });
+            custReceipts.forEach(r=>{
+              entries.push({date:r.receipt_date,type:'Payment',ref:r.receipt_no||`RCP-${r.id}`,description:r.notes||`${r.payment_mode}${r.reference?` — ${r.reference}`:''}`,debit:0,credit:Number(r.amount),receipt:r});
+            });
+            entries.sort((a,b)=>a.date>b.date?1:-1);
+
+            // Running balance
+            let runBal=0;
+            const ledger=entries.map(e=>{ runBal+=e.debit-e.credit; return {...e,balance:runBal}; });
+
+            const totalDebit=entries.reduce((s,e)=>s+e.debit,0);
+            const totalCredit=entries.reduce((s,e)=>s+e.credit,0);
+            const outstanding=totalDebit-totalCredit;
+
+            return <>
+              {/* Customer summary */}
+              <div style={{...card,padding:18,marginBottom:16}}>
+                <div style={{display:'flex',alignItems:'center',gap:20,flexWrap:'wrap'}}>
+                  <div>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#3a3a5a',marginBottom:3}}>ACCOUNT</div>
+                    <div style={{fontSize:16,fontWeight:500}}>{cust?.name}</div>
+                    {cust?.customer_code&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'#c8a96e'}}>{cust.customer_code}</div>}
+                  </div>
+                  <div style={{flex:1}}/>
+                  {[['Total Invoiced',fmtL(totalDebit),'#7ab8d4'],['Total Received',fmtL(totalCredit),'#7ab87a'],['Outstanding',fmtL(outstanding),outstanding>0?'#c47a7a':'#7ab87a']].map(([l,v,c])=>(
+                    <div key={l} style={{textAlign:'right',borderLeft:'1px solid #1a1a2e',paddingLeft:20}}>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#3a3a5a',marginBottom:3}}>{l}</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,color:c,fontWeight:600}}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Full ledger receipt form */}
+              <div style={{...card,padding:16,marginBottom:16}}>
+                <div style={{fontSize:10,color:'#3a3a5a',fontFamily:"'DM Mono',monospace",marginBottom:10}}>LOG DETAILED PAYMENT RECEIPT</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:10}}>
+                  <div><label style={lbl}>Receipt No.</label><input style={inp} type="text" value={receiptForm.receipt_no} onChange={e=>setReceiptForm({...receiptForm,receipt_no:e.target.value})}/></div>
+                  <div><label style={lbl}>Date *</label><input style={inp} type="date" value={receiptForm.receipt_date} onChange={e=>setReceiptForm({...receiptForm,receipt_date:e.target.value,customer_id:ledgerCust})}/></div>
+                  <div><label style={lbl}>Amount (₹) *</label><input style={inp} type="number" value={receiptForm.amount} onChange={e=>setReceiptForm({...receiptForm,amount:e.target.value})}/></div>
+                  <div><label style={lbl}>Linked PO</label><select style={inp} value={receiptForm.po_id} onChange={e=>setReceiptForm({...receiptForm,po_id:e.target.value})}><option value="">None</option>{custPOs.map(p=><option key={p.id} value={p.id}>{p.id}</option>)}</select></div>
+                  <div><label style={lbl}>Payment Mode</label><select style={inp} value={receiptForm.payment_mode} onChange={e=>setReceiptForm({...receiptForm,payment_mode:e.target.value})}>{PAY_MODES.map(m=><option key={m}>{m}</option>)}</select></div>
+                  <div style={{gridColumn:'span 2'}}><label style={lbl}>Reference / UTR</label><input style={inp} type="text" value={receiptForm.reference} onChange={e=>setReceiptForm({...receiptForm,reference:e.target.value})}/></div>
+                  <div style={{gridColumn:'span 2'}}><label style={lbl}>Notes</label><input style={inp} type="text" value={receiptForm.notes} onChange={e=>setReceiptForm({...receiptForm,notes:e.target.value})}/></div>
+                  <div style={{display:'flex',alignItems:'flex-end'}}><button onClick={()=>{ setReceiptForm(f=>({...f,customer_id:ledgerCust})); addReceipt(); }} disabled={saving} style={{...btn(saving,'#7ab87a','#08090f'),width:'100%',padding:'10px'}}>{saving?'Saving…':'LOG →'}</button></div>
+                </div>
+              </div>
+
+              {/* Ledger table */}
+              <div style={{...card,overflow:'auto'}}>
+                <div style={{padding:'12px 16px 0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#3a3a5a',letterSpacing:'.12em'}}>ACCOUNT STATEMENT</div>
+                  <div style={{fontSize:10,color:'#3a3a5a',fontFamily:"'DM Mono',monospace"}}>Dr = amount owed · Cr = amount received</div>
+                </div>
+                <table>
+                  <thead><tr>{['Date','Type','Reference','Description','Dr (Invoiced)','Cr (Received)','Balance',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {ledger.length===0&&<tr><td colSpan={8} style={{textAlign:'center',color:'#3a3a5a',padding:24}}>No transactions yet.</td></tr>}
+                    {ledger.map((e,i)=><tr key={i} style={{background:e.type==='Invoice'?'#1a1a0a20':e.type==='Payment'?'#0a1a0a20':'transparent'}}>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#5a5a7a',whiteSpace:'nowrap'}}>{e.date}</td>
+                      <td><span className="chip" style={{fontSize:9,color:e.type==='Invoice'?'#c8a96e':e.type==='Payment'?'#7ab87a':e.type==='Credit Note'?'#7a7ab8':'#5a5a7a',borderColor:'transparent',background:'transparent'}}>{e.type}</span></td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#c8a96e',fontSize:11}}>{e.ref}</td>
+                      <td style={{color:'#8a8aaa',fontSize:12}}>{e.description}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:e.debit>0?'#c47a7a':'#3a3a5a',fontWeight:e.debit>0?600:400}}>{e.debit>0?fmtL(e.debit):'—'}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:e.credit>0?'#7ab87a':'#3a3a5a',fontWeight:e.credit>0?600:400}}>{e.credit>0?fmtL(e.credit):'—'}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:e.balance>0?'#c47a7a':e.balance<0?'#7ab87a':'#5a5a7a',fontWeight:700}}>{e.balance>0?`${fmtL(e.balance)} Dr`:e.balance<0?`${fmtL(Math.abs(e.balance))} Cr`:'NIL'}</td>
+                      <td>{e.receipt&&<button onClick={()=>askDelete('receipt',e.receipt.id,`Receipt ${e.receipt.receipt_no||e.receipt.id}`,()=>deleteReceipt(e.receipt.id))} style={{background:'#1a1a2e',border:'1px solid #2a2a3a',color:'#c47a7a',borderRadius:2,padding:'3px 7px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button>}</td>
+                    </tr>)}
+                    {/* Totals row */}
+                    {ledger.length>0&&<tr style={{borderTop:'2px solid #1a1a2e'}}>
+                      <td colSpan={4} style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'#3a3a5a',padding:'10px 12px'}}>TOTAL</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#c47a7a',fontWeight:700}}>{fmtL(totalDebit)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#7ab87a',fontWeight:700}}>{fmtL(totalCredit)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:outstanding>0?'#c47a7a':'#7ab87a',fontWeight:700,fontSize:13}}>{outstanding>0?`${fmtL(outstanding)} Dr`:outstanding<0?`${fmtL(Math.abs(outstanding))} Cr`:'NIL'}</td>
+                      <td/>
+                    </tr>}
+                  </tbody>
+                </table>
+              </div>
+            </>;
+          })()}
+          {!ledgerCust&&<div style={{textAlign:'center',color:'#3a3a5a',padding:48,fontSize:13,fontFamily:"'DM Mono',monospace"}}>← Select a customer to view their account statement</div>}
         </div>)}
 
         {/* ════ SETTINGS ════ */}
