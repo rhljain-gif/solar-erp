@@ -458,11 +458,6 @@ export default function DashboardPage() {
     setSaving(false);
   };
 
-    if (error) showToast('Error: '+error.message);
-    else { showToast('Target saved ✓'); await fetchAll(); }
-    setSaving(false);
-  };
-
   // ── Proforma Invoice CRUD ─────────────────────────────────────────────────
   const nextPINumber = useCallback(() => {
     const existing = pis.map(p=>{ const m=p.pi_number?.match(/\/(\d+)\//); return m?parseInt(m[1]):0; });
