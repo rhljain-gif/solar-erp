@@ -18,10 +18,11 @@ const MANUFACTURER = {
 
 const VENDOR_TYPES = ['Manufacturer','Transporter','Installer','Service Provider','Other'];
 
-const fmt  = n => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n || 0);
-const fmtC = n => '₹' + fmt(n);
-const pct  = n => isFinite(n) && !isNaN(n) ? n.toFixed(1) + '%' : '—';
-const fmtL = n => { if (!n) return '₹0'; if (Math.abs(n) >= 1e7) return '₹' + (n/1e7).toFixed(2) + 'Cr'; if (Math.abs(n) >= 1e5) return '₹' + (n/1e5).toFixed(1) + 'L'; return fmtC(n); };
+const fmt     = n => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n || 0);
+const fmtC    = n => '₹' + fmt(n);
+const fmtX    = n => { if (n===undefined||n===null||n==='') return '₹0.00'; const x=Number(n); return '₹'+new Intl.NumberFormat('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}).format(x); };
+const pct     = n => isFinite(n) && !isNaN(n) ? n.toFixed(1) + '%' : '—';
+const fmtL    = n => { if (!n) return '₹0'; if (Math.abs(n) >= 1e7) return '₹' + (n/1e7).toFixed(2) + 'Cr'; if (Math.abs(n) >= 1e5) return '₹' + (n/1e5).toFixed(1) + 'L'; return fmtX(n); };
 
 const PO_STAGES   = ['PO Received','Advance Received','Invoice Raised','Shipment Dispatched','Delivered / Fulfilled'];
 const GST_RATES   = [0,5,12,18,28];
@@ -83,7 +84,7 @@ const catColor = cat => ({'Salary':'#2d7fa8','Rent':'#6a5a9a','Travel':'#c87030'
 
 
 // WattPower Payment Calculator Panel — inline in Orders table
-const WPCalculatorPanel = ({po, wpPayments, wpForm, setWpForm, onLog, saving, settings, inp, lbl, btn, fmtL, fmtC}) => {
+const WPCalculatorPanel = ({po, wpPayments, wpForm, setWpForm, onLog, saving, settings, inp, lbl, btn, fmtL, fmtC, fmtX}) => {
   const paidQty    = wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+w.qty,0);
   const paidAmt    = wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+Number(w.net_payable),0);
   const unpaidQty  = po.qty - paidQty;
@@ -103,9 +104,9 @@ const WPCalculatorPanel = ({po, wpPayments, wpForm, setWpForm, onLog, saving, se
       {/* Summary strip */}
       <div style={{display:'flex',gap:24,marginBottom:14,flexWrap:'wrap'}}>
         <div style={{background:'#f5f0e8',borderRadius:6,padding:'10px 16px',display:'flex',gap:20,fontSize:12,fontFamily:"'DM Mono',monospace",alignItems:'center',flex:1}}>
-          <span style={{color:'#8a7e72'}}>Purchase Price: <strong style={{color:po.delivery_type==='DDP'?'#2d7fa8':'#2d8a5e'}}>{fmtC(unitPrice)} <span style={{fontSize:10,background:po.delivery_type==='DDP'?'#dce8ed':'#dceadc',color:po.delivery_type==='DDP'?'#4a8fa8':'#5a9e6f',borderRadius:2,padding:'1px 5px'}}>{po.delivery_type}</span></strong></span>
+          <span style={{color:'#8a7e72'}}>Purchase Price: <strong style={{color:po.delivery_type==='DDP'?'#2d7fa8':'#2d8a5e'}}>{fmtX(unitPrice)} <span style={{fontSize:10,background:po.delivery_type==='DDP'?'#dce8ed':'#dceadc',color:po.delivery_type==='DDP'?'#4a8fa8':'#5a9e6f',borderRadius:2,padding:'1px 5px'}}>{po.delivery_type}</span></strong></span>
           <span style={{color:'#8a7e72'}}>Total Ordered: <strong style={{color:'#2c2520'}}>{po.qty} units</strong></span>
-          <span style={{color:'#8a7e72'}}>Already Paid: <strong style={{color:'#2d8a5e'}}>{paidQty} units ({fmtL(paidAmt)})</strong></span>
+          <span style={{color:'#8a7e72'}}>Already Paid: <strong style={{color:'#2d8a5e'}}>{paidQty} units ({fmtX(paidAmt)})</strong></span>
           <span style={{color:'#8a7e72'}}>Unpaid: <strong style={{color:unpaidQty>0?'#b85a5a':'#2d8a5e'}}>{unpaidQty} units</strong></span>
           <span style={{color:'#8a7e72'}}>GST: <strong style={{color:'#6a5a9a'}}>{gstRate}%</strong></span>
           <span style={{color:'#8a7e72'}}>TDS: <strong style={{color:'#c87030'}}>{tdsRate}%</strong></span>
@@ -146,10 +147,10 @@ const WPCalculatorPanel = ({po, wpPayments, wpForm, setWpForm, onLog, saving, se
             <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:0}}>
               {[
                 ['Units',qty||'—','#2c2520'],
-                ['× Unit Price',qty?fmtC(unitPrice):'—','#8a7e72'],
-                ['Gross Amount',qty?fmtL(gross):'—','#b8924a'],
-                [`+ GST @ ${gstRate}%`,qty?fmtL(gstAmt):'—','#6a5a9a'],
-                [`− TDS @ ${tdsRate}%`,qty?fmtL(tdsAmt):'—','#c87030'],
+                ['× Unit Price',qty?fmtX(unitPrice):'—','#8a7e72'],
+                ['Gross Amount',qty?fmtX(gross):'—','#b8924a'],
+                [`+ GST @ ${gstRate}%`,qty?fmtX(gstAmt):'—','#6a5a9a'],
+                [`− TDS @ ${tdsRate}%`,qty?fmtX(tdsAmt):'—','#c87030'],
               ].map(([label,val,color])=>(
                 <div key={label} style={{padding:'8px 12px',borderRight:'1px solid #e0d8cc'}}>
                   <div style={{fontSize:9,color:'#a09689',fontFamily:"'DM Mono',monospace",marginBottom:4}}>{label}</div>
@@ -159,10 +160,10 @@ const WPCalculatorPanel = ({po, wpPayments, wpForm, setWpForm, onLog, saving, se
             </div>
             <div style={{marginTop:10,padding:'10px 12px',background:qty?'#e8f4ec':'#f5f0e8',borderRadius:4,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
               <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'#8a7e72'}}>NET AMOUNT TO PAY WATTPOWER</div>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,fontWeight:700,color:qty?'#2d8a5e':'#a09689'}}>{qty?fmtL(netPayable):'Enter qty above'}</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,fontWeight:700,color:qty?'#2d8a5e':'#a09689'}}>{qty?fmtX(netPayable):'Enter qty above'}</div>
             </div>
             {qty>0&&<div style={{marginTop:6,fontSize:10,color:'#8a7e72',fontFamily:"'DM Mono',monospace"}}>
-              = {fmtL(gross)} (gross) + {fmtL(gstAmt)} (GST {gstRate}%) − {fmtL(tdsAmt)} (TDS {tdsRate}%) = <strong style={{color:'#2d8a5e'}}>{fmtL(netPayable)}</strong>
+              = {fmtX(gross)} (gross) + {fmtX(gstAmt)} (GST {gstRate}%) − {fmtX(tdsAmt)} (TDS {tdsRate}%) = <strong style={{color:'#2d8a5e'}}>{fmtX(netPayable)}</strong>
             </div>}
           </div>
 
@@ -186,23 +187,23 @@ const WPCalculatorPanel = ({po, wpPayments, wpForm, setWpForm, onLog, saving, se
                 <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:11}}>{w.payment_date}</td>
                 <td style={{fontFamily:"'DM Mono',monospace",fontWeight:600,textAlign:'center'}}>{w.qty}</td>
                 <td><span style={{fontSize:10,background:w.delivery_type==='DDP'?'#dce8ed':'#dceadc',color:w.delivery_type==='DDP'?'#4a8fa8':'#5a9e6f',borderRadius:2,padding:'1px 5px',fontFamily:"'DM Mono',monospace"}}>{w.delivery_type}</span></td>
-                <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtC(w.unit_purchase_price)}</td>
-                <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a'}}>{fmtL(w.gross_amount)}</td>
-                <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a'}}>{fmtL(w.gst_amount)}</td>
-                <td style={{fontFamily:"'DM Mono',monospace",color:'#c87030'}}>−{fmtL(w.tds_amount)}</td>
-                <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e',fontWeight:700}}>{fmtL(w.net_payable)}</td>
+                <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtX(w.unit_purchase_price)}</td>
+                <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a'}}>{fmtX(w.gross_amount)}</td>
+                <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a'}}>{fmtX(w.gst_amount)}</td>
+                <td style={{fontFamily:"'DM Mono',monospace",color:'#c87030'}}>−{fmtX(w.tds_amount)}</td>
+                <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e',fontWeight:700}}>{fmtX(w.net_payable)}</td>
                 <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:10}}>{w.utr_reference||'—'}</td>
                 <td style={{color:'#8a7e72',fontSize:10}}>{w.notes||'—'}</td>
-                <td><button onClick={()=>askDelete('wppay',w.id,`Payment of ${fmtL(w.net_payable)} on ${w.payment_date}`,()=>deleteWPPayment(w.id))} style={{background:'#fef0f0',border:'1px solid #e8d0d0',color:'#b85a5a',borderRadius:3,padding:'3px 7px',cursor:'pointer',fontSize:9,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
+                <td><button onClick={()=>askDelete('wppay',w.id,`Payment of ${fmtX(w.net_payable)} on ${w.payment_date}`,()=>deleteWPPayment(w.id))} style={{background:'#fef0f0',border:'1px solid #e8d0d0',color:'#b85a5a',borderRadius:3,padding:'3px 7px',cursor:'pointer',fontSize:9,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
               </tr>
             ))}</tbody>
             <tfoot><tr>
               <td colSpan={2} style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',padding:'6px 8px'}}>TOTAL PAID</td>
               <td/><td/>
-              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#b8924a'}}>{fmtL(wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+Number(w.gross_amount),0))}</td>
-              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#6a5a9a'}}>{fmtL(wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+Number(w.gst_amount),0))}</td>
-              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#c87030'}}>−{fmtL(wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+Number(w.tds_amount),0))}</td>
-              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#2d8a5e',fontSize:13}}>{fmtL(paidAmt)}</td>
+              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#b8924a'}}>{fmtX(wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+Number(w.gross_amount),0))}</td>
+              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#6a5a9a'}}>{fmtX(wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+Number(w.gst_amount),0))}</td>
+              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#c87030'}}>−{fmtX(wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+Number(w.tds_amount),0))}</td>
+              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#2d8a5e',fontSize:13}}>{fmtX(paidAmt)}</td>
               <td colSpan={3}/>
             </tr></tfoot>
           </table>
@@ -216,7 +217,7 @@ const WPCalculatorPanel = ({po, wpPayments, wpForm, setWpForm, onLog, saving, se
 };
 
 // Inline invoice sub-panel for Orders tab
-const POInvoicePanel = ({po, fin, poInvoices, invoiceForm, setInvoiceForm, onAdd, onEdit, onDelete, saving, settings, inp, lbl, btn, fmtL, fmtC, fmt}) => {
+const POInvoicePanel = ({po, fin, poInvoices, invoiceForm, setInvoiceForm, onAdd, onEdit, onDelete, saving, settings, inp, lbl, btn, fmtL, fmtC, fmtX, fmt}) => {
   const invRows = poInvoices.filter(i=>i.po_id===po.id);
   const alreadyBilled = invRows.reduce((s,i)=>s+i.qty,0);
   const remaining = po.qty - alreadyBilled;
@@ -240,12 +241,12 @@ const POInvoicePanel = ({po, fin, poInvoices, invoiceForm, setInvoiceForm, onAdd
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a',fontWeight:600,fontSize:11}}>{inv.invoice_no}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:11}}>{inv.invoice_date}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",textAlign:'center',fontWeight:600}}>{inv.qty}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtC(inv.unit_price)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{Number(inv.discount_amount)>0?`−${fmtL(inv.discount_amount)}`:'—'}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#4a8fa8'}}>{fmtL(net)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtX(inv.unit_price)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{Number(inv.discount_amount)>0?`−${fmtX(inv.discount_amount)}`:'—'}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#4a8fa8'}}>{fmtX(net)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a',fontSize:10}}>{inv.gst_rate}%</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a'}}>{fmtL(gst)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#2d7fa8',fontWeight:700}}>{fmtL(net+gst)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a'}}>{fmtX(gst)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#2d7fa8',fontWeight:700}}>{fmtX(net+gst)}</td>
                   <td style={{color:'#8a7e72',fontSize:10}}>{inv.notes||'—'}</td>
                   <td style={{whiteSpace:'nowrap'}}>
                     <button onClick={()=>onEdit(inv)} style={{background:'#fdf6ec',border:'1px solid #e0d8cc',color:'#b8924a',borderRadius:3,padding:'3px 8px',cursor:'pointer',fontSize:9,fontFamily:"'DM Mono',monospace",marginRight:3}}>✏</button>
@@ -258,9 +259,9 @@ const POInvoicePanel = ({po, fin, poInvoices, invoiceForm, setInvoiceForm, onAdd
               <td colSpan={2} style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',padding:'6px 8px'}}>TOTAL BILLED: {alreadyBilled} / {po.qty} units</td>
               <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#2d8a5e',textAlign:'center'}}>{alreadyBilled}</td>
               <td/><td/>
-              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#4a8fa8'}}>{fmtL(fin.invoicedNetTax)}</td>
-              <td/><td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#6a5a9a'}}>{fmtL(fin.invoicedGst)}</td>
-              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#2d7fa8',fontSize:13}}>{fmtL(fin.invoicedAmt)}</td>
+              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#4a8fa8'}}>{fmtX(fin.invoicedNetTax)}</td>
+              <td/><td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#6a5a9a'}}>{fmtX(fin.invoicedGst)}</td>
+              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#2d7fa8',fontSize:13}}>{fmtX(fin.invoicedAmt)}</td>
               <td colSpan={2}/>
             </tr></tfoot>
           </table>
@@ -318,8 +319,8 @@ const POInvoicePanel = ({po, fin, poInvoices, invoiceForm, setInvoiceForm, onAdd
             const net=q*up-disc;
             const gstAmt=net*(rate/100);
             return <div style={{marginTop:8,display:'flex',gap:14,fontSize:11,fontFamily:"'DM Mono',monospace",color:'#8a7e72'}}>
-              <span>Taxable: <strong style={{color:'#2c2520'}}>{fmtL(net)}</strong></span>
-              <span>GST ({rate}%): <strong style={{color:'#6a5a9a'}}>{fmtL(gstAmt)}</strong></span>
+              <span>Taxable: <strong style={{color:'#2c2520'}}>{fmtX(net)}</strong></span>
+              <span>GST ({rate}%): <strong style={{color:'#6a5a9a'}}>{fmtX(gstAmt)}</strong></span>
               <span>Total: <strong style={{color:'#2d7fa8'}}>{fmtL(net+gstAmt)}</strong></span>
             </div>;
           })()}
@@ -1479,8 +1480,8 @@ export default function DashboardPage() {
                       <td style={{fontFamily:"'DM Mono',monospace",textAlign:'center'}}>{fin.orderedQty}</td>
                       <td style={{fontFamily:"'DM Mono',monospace",color:'#b08030',textAlign:'center'}}>{fin.balQty}</td>
                       <td><StatusBadge s={p.status}/></td>
-                      <td style={{fontFamily:"'DM Mono',monospace",color:'#4a8fa8'}}>{fmtL(fin.invoicedAmt)}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace",color:fin.balanceDue>0?'#b85a5a':'#2d8a5e',fontWeight:600}}>{fmtL(fin.balanceDue)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#4a8fa8'}}>{fmtX(fin.invoicedAmt)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:fin.balanceDue>0?'#b85a5a':'#2d8a5e',fontWeight:600}}>{fmtX(fin.balanceDue)}</td>
                       <td style={{fontFamily:"'DM Mono',monospace",color:'#a09689'}}>{p.po_date}</td>
                     </tr>);})}</tbody>
                 </table>
@@ -1624,10 +1625,10 @@ export default function DashboardPage() {
                   <td><span style={{fontSize:10,fontFamily:"'DM Mono',monospace",color:catColor(e.category),background:catColor(e.category)+'20',borderRadius:4,padding:'2px 6px'}}>{e.category}</span></td>
                   <td style={{fontWeight:500}}>{e.description}</td>
                   <td style={{color:'#7a6e64',fontSize:11}}>{e.vendor_name||'—'}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtL(e.amount)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtX(e.amount)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{e.gst_rate}%</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:e.gst_amount>0?'#b85a5a':'#7a6e64'}}>{e.gst_amount>0?fmtL(e.gst_amount):'—'}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a',fontWeight:600}}>{fmtL(e.total_amount)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:e.gst_amount>0?'#b85a5a':'#7a6e64'}}>{e.gst_amount>0?fmtX(e.gst_amount):'—'}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a',fontWeight:600}}>{fmtX(e.total_amount)}</td>
                   <td style={{textAlign:'center'}}>{e.is_gst_claimable?<span style={{color:'#2d8a5e',fontSize:12}}>✓</span>:<span style={{color:'#7a6e64',fontSize:12}}>—</span>}</td>
                   <td style={{color:'#7a6e64',fontSize:11}}>{e.payment_mode}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:11}}>{e.invoice_ref||'—'}</td>
@@ -1820,12 +1821,12 @@ export default function DashboardPage() {
                 <tbody>{gstAnalytics.monthly.map(m=>(
                   <tr key={m.label}>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a'}}>{m.label}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{m.outputGST>0?fmtL(m.outputGST):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.inputGSTPurch>0?fmtL(m.inputGSTPurch):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.inputGSTMfrExp>0?fmtL(m.inputGSTMfrExp):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.inputGSTBizExp>0?fmtL(m.inputGSTBizExp):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.totalInput>0?fmtL(m.totalInput):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:m.netGST>=0?'#b8924a':'#2d8a5e',fontWeight:600}}>{m.outputGST>0||m.totalInput>0?fmtL(m.netGST):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{m.outputGST>0?fmtX(m.outputGST):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.inputGSTPurch>0?fmtX(m.inputGSTPurch):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.inputGSTMfrExp>0?fmtX(m.inputGSTMfrExp):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.inputGSTBizExp>0?fmtX(m.inputGSTBizExp):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.totalInput>0?fmtX(m.totalInput):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:m.netGST>=0?'#b8924a':'#2d8a5e',fontWeight:600}}>{m.outputGST>0||m.totalInput>0?fmtX(m.netGST):'—'}</td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -1900,7 +1901,7 @@ export default function DashboardPage() {
                     <td style={{fontFamily:"'DM Mono',monospace"}}>{p.qty}</td>
                     <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtL(val)}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{fmtL(p.advance)}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:bal>0?'#b85a5a':'#2d8a5e',fontWeight:600}}>{fmtL(bal)}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:bal>0?'#b85a5a':'#2d8a5e',fontWeight:600}}>{fmtX(bal)}</td>
                     <td><StatusBadge s={p.status}/></td>
                     <td><StagePipeline current={p.status}/></td>
                     <td><input style={{...inp,width:110,fontSize:10,padding:'3px 8px'}} placeholder="INV-001" defaultValue={p.invoice_no||''} onBlur={e=>{ if(e.target.value!==p.invoice_no) updatePOField(p.id,'invoice_no',e.target.value);}}/></td>
@@ -1944,10 +1945,10 @@ export default function DashboardPage() {
               const invTotal=netTax+gstAmt;
               const profitGross=netTax-Number(poForm.qty)*Number(poForm.purchase_price||0);
               return <div style={{background:'#fff8f0',border:'1px solid #e0d8cc',borderRadius:6,padding:'10px 16px',marginBottom:12,display:'flex',gap:20,flexWrap:'wrap',fontSize:12,fontFamily:"'DM Mono',monospace"}}>
-                <span style={{color:'#8a7e72'}}>Taxable: <strong style={{color:'#2c2520'}}>{fmtL(gross)}</strong></span>
+                <span style={{color:'#8a7e72'}}>Taxable: <strong style={{color:'#2c2520'}}>{fmtX(gross)}</strong></span>
                 {disc>0&&<span style={{color:'#8a7e72'}}>Discount: <strong style={{color:'#b85a5a'}}>−{fmtL(disc)}</strong></span>}
                 {disc>0&&<span style={{color:'#8a7e72'}}>Net Taxable: <strong style={{color:'#b8924a'}}>{fmtL(netTax)}</strong></span>}
-                <span style={{color:'#8a7e72'}}>GST ({Number(poForm.gst_rate)||settings.gst_rate_sales||12}%): <strong style={{color:'#6a5a9a'}}>{fmtL(gstAmt)}</strong></span>
+                <span style={{color:'#8a7e72'}}>GST ({Number(poForm.gst_rate)||settings.gst_rate_sales||12}%): <strong style={{color:'#6a5a9a'}}>{fmtX(gstAmt)}</strong></span>
                 <span style={{color:'#8a7e72'}}>Invoice Total: <strong style={{color:'#2d7fa8'}}>{fmtL(invTotal)}</strong></span>
                 {poForm.purchase_price&&<span style={{color:'#8a7e72'}}>Gross Profit: <strong style={{color:profitGross>=0?'#2d8a5e':'#b85a5a'}}>{fmtL(profitGross)}</strong></span>}
               </div>;
@@ -1989,8 +1990,8 @@ export default function DashboardPage() {
                   <td><span style={{fontSize:10,background:p.delivery_type==='DDP'?'#dce8ed':'#dceadc',color:p.delivery_type==='DDP'?'#4a8fa8':'#5a9e6f',borderRadius:2,padding:'2px 6px',fontFamily:"'DM Mono',monospace"}}>{p.delivery_type}</span></td>
                   <td style={{color:'#8a7e72',fontSize:11,whiteSpace:'nowrap'}}>{p.vendor_name||'—'}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",textAlign:'center'}}>{fin.orderedQty}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72'}}>{fmtL(fin.orderedTotal)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{fin.orderedDiscount>0?`−${fmtL(fin.orderedDiscount)}`:'—'}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72'}}>{fmtX(fin.orderedTotal)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{fin.orderedDiscount>0?`−${fmtX(fin.orderedDiscount)}`:'—'}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#5a9e6f',fontWeight:600,textAlign:'center'}}>{fin.deliveredQty}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:fin.balQty>0?'#b08030':'#5a9e6f',fontWeight:600,textAlign:'center'}}>{fin.balQty}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:fin.unbilledQty>0?'#c87030':'#5a9e6f',fontWeight:600,textAlign:'center'}}>
@@ -1998,13 +1999,13 @@ export default function DashboardPage() {
                     {fin.unbilledQty>0&&<div style={{fontSize:9,color:'#c87030',marginTop:1}}>{fin.unbilledQty} unbilled</div>}
                   </td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#4a8fa8',fontWeight:600}}>
-                    {fmtL(fin.invoicedAmt)}
+                    {fmtX(fin.invoicedAmt)}
                     {fin.invRows.length>0&&<div style={{fontSize:9,color:'#a09689',marginTop:1}}>{fin.invRows.length} invoice{fin.invRows.length>1?'s':''}</div>}
                   </td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#5a9e6f'}}>
                     <input style={{...inp,width:110,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace",color:'#5a9e6f'}} type="number" defaultValue={p.advance} onBlur={e=>{ if(Number(e.target.value)!==Number(p.advance)) updatePOField(p.id,'advance',e.target.value); }}/>
                   </td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:fin.balanceDue>0?'#b85a5a':'#5a9e6f',fontWeight:700}}>{fmtL(fin.balanceDue)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:fin.balanceDue>0?'#b85a5a':'#5a9e6f',fontWeight:700}}>{fmtX(fin.balanceDue)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:10}}>{p.po_date}</td>
                   <td><StatusBadge s={p.status}/></td>
                   <td>
@@ -2031,7 +2032,7 @@ export default function DashboardPage() {
                     <td colSpan={17} style={{padding:0,background:'#f5f0e8',borderBottom:'2px solid #b8924a30'}}>
                       <POInvoicePanel po={p} fin={fin} poInvoices={poInvoices} invoiceForm={invoiceForm} setInvoiceForm={setInvoiceForm}
                         onAdd={()=>addPOInvoice(p.id)} onEdit={openEditInvoice} onDelete={id=>askDelete('poinv',id,`Invoice`,()=>deletePOInvoice(id))}
-                        saving={saving} settings={settings} inp={inp} lbl={lbl} btn={btn} fmtL={fmtL} fmtC={fmtC} fmt={fmt}/>
+                        saving={saving} settings={settings} inp={inp} lbl={lbl} btn={btn} fmtL={fmtL} fmtC={fmtC} fmtX={fmtX} fmt={fmt}/>
                     </td>
                   </tr>
                 )}
@@ -2040,7 +2041,7 @@ export default function DashboardPage() {
                     <td colSpan={17} style={{padding:0,background:'#f0ecf8',borderBottom:'2px solid #6a5a9a30'}}>
                       <WPCalculatorPanel po={p} wpPayments={wpPayments} wpForm={wpForm} setWpForm={setWpForm}
                         onLog={()=>addWPPayment(p.id)} saving={saving} settings={settings}
-                        inp={inp} lbl={lbl} btn={btn} fmtL={fmtL} fmtC={fmtC}/>
+                        inp={inp} lbl={lbl} btn={btn} fmtL={fmtL} fmtC={fmtC} fmtX={fmtX}/>
                     </td>
                   </tr>
                 )}
@@ -2355,13 +2356,13 @@ export default function DashboardPage() {
                 :<table><thead><tr>{['Expense','Date','Base','GST%','GST','Total','Vendor','Ref',''].map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{cn.expenses.map(e=><tr key={e.id}>
                   <td style={{fontWeight:500}}>{e.expense_name}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:10}}>{e.expense_date}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtL(e.amount)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtX(e.amount)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{e.gst_rate}%</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{fmtL(e.gst_amount)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a',fontWeight:600}}>{fmtL(e.total_amount)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{fmtX(e.gst_amount)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a',fontWeight:600}}>{fmtX(e.total_amount)}</td>
                   <td style={{color:'#7a6e64',fontSize:10}}>{e.vendor_name||'—'}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:10}}>{e.invoice_ref||'—'}</td>
-                  <td><button onClick={()=>askDelete('mfrexp',e.id,`${e.expense_name} — ${fmtL(e.total_amount)}`,()=>deleteMfrExp(e.id))} style={{background:'#d9d2c7',border:'1px solid #e0d8cc',color:'#b85a5a',borderRadius:6,padding:'3px 7px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
+                  <td><button onClick={()=>askDelete('mfrexp',e.id,`${e.expense_name} — ${fmtX(e.total_amount)}`,()=>deleteMfrExp(e.id))} style={{background:'#d9d2c7',border:'1px solid #e0d8cc',color:'#b85a5a',borderRadius:6,padding:'3px 7px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
                 </tr>)}</tbody></table>
               )}
             </div>
@@ -2462,10 +2463,10 @@ export default function DashboardPage() {
                   <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:0,background:'#fff8f0',border:'1px solid #e0d8cc',borderRadius:6,overflow:'hidden',marginBottom:10}}>
                     {[
                       ['PO Type',<span style={{fontSize:12,background:po.delivery_type==='DDP'?'#dce8ed':'#dceadc',color:po.delivery_type==='DDP'?'#4a8fa8':'#5a9e6f',borderRadius:2,padding:'2px 8px',fontFamily:"'DM Mono',monospace"}}>{po.delivery_type}</span>,''],
-                      ['Unit Purchase Price',fmtC(unitPrice),'#b8924a'],
-                      ['Gross Amount',qty?fmtL(gross):'—','#2c2520'],
-                      [`GST @ ${gstRate}%`,qty?fmtL(gstAmt):'—','#6a5a9a'],
-                      [`TDS @ ${tdsRate}%`,qty?`− ${fmtL(tdsAmt)}`:'—','#c87030'],
+                      ['Unit Purchase Price',fmtX(unitPrice),'#b8924a'],
+                      ['Gross Amount',qty?fmtX(gross):'—','#2c2520'],
+                      [`GST @ ${gstRate}%`,qty?fmtX(gstAmt):'—','#6a5a9a'],
+                      [`TDS @ ${tdsRate}%`,qty?`− ${fmtX(tdsAmt)}`:'—','#c87030'],
                       ['NET PAYABLE',qty?fmtL(net):'—','#2d8a5e'],
                     ].map(([label,val,color],i)=>(
                       <div key={label} style={{padding:'10px 14px',borderRight:i<5?'1px solid #e0d8cc':'none',background:i===5?'#e8f4ec':'transparent'}}>
@@ -2475,7 +2476,7 @@ export default function DashboardPage() {
                     ))}
                   </div>
                   {qty>0&&<div style={{fontSize:10,color:'#8a7e72',fontFamily:"'DM Mono',monospace",marginBottom:10}}>
-                    {fmtL(gross)} + {fmtL(gstAmt)} (GST) − {fmtL(tdsAmt)} (TDS) = <strong style={{color:'#2d8a5e'}}>{fmtL(net)}</strong>
+                    {fmtX(gross)} + {fmtX(gstAmt)} (GST) − {fmtX(tdsAmt)} (TDS) = <strong style={{color:'#2d8a5e'}}>{fmtX(net)}</strong>
                     {qty>unpaidQty&&<span style={{color:'#b85a5a',marginLeft:12}}>⚠ Only {unpaidQty} units unpaid on this PO</span>}
                   </div>}
                   <div style={{display:'flex',justifyContent:'flex-end'}}>
@@ -2500,8 +2501,8 @@ export default function DashboardPage() {
                   <div style={{fontWeight:500}}>{cust?.name||'—'}</div>
                   <span style={{fontSize:10,background:p.delivery_type==='DDP'?'#dce8ed':'#dceadc',color:p.delivery_type==='DDP'?'#4a8fa8':'#5a9e6f',borderRadius:2,padding:'1px 6px',fontFamily:"'DM Mono',monospace"}}>{p.delivery_type}</span>
                   <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#8a7e72'}}>Total: <strong style={{color:'#2c2520'}}>{p.qty} units</strong></div>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#8a7e72'}}>Paid: <strong style={{color:'#2d8a5e'}}>{p.paidQty} units ({fmtL(p.paidAmt)})</strong></div>
-                  {p.unpaidQty>0&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#b85a5a'}}>Unpaid: <strong>{p.unpaidQty} units (~{fmtL(p.unpaidNet)})</strong></div>}
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#8a7e72'}}>Paid: <strong style={{color:'#2d8a5e'}}>{p.paidQty} units ({fmtX(p.paidAmt)})</strong></div>
+                  {p.unpaidQty>0&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#b85a5a'}}>Unpaid: <strong>{p.unpaidQty} units (~{fmtX(p.unpaidNet)})</strong></div>}
                   <div style={{flex:1,height:6,background:'#d9d2c7',borderRadius:3,overflow:'hidden',marginLeft:8}}>
                     <div style={{height:'100%',width:`${pct}%`,background:pct>=100?'#2d8a5e':'#6a5a9a',borderRadius:3,transition:'width .3s'}}/>
                   </div>
@@ -2513,14 +2514,14 @@ export default function DashboardPage() {
                     <tr key={w.id}>
                       <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:11}}>{w.payment_date}</td>
                       <td style={{fontFamily:"'DM Mono',monospace",fontWeight:600,textAlign:'center'}}>{w.qty}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtC(w.unit_purchase_price)}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a'}}>{fmtL(w.gross_amount)}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a'}}>{fmtL(w.gst_amount)}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace",color:'#c87030'}}>−{fmtL(w.tds_amount)}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e',fontWeight:700}}>{fmtL(w.net_payable)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtX(w.unit_purchase_price)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a'}}>{fmtX(w.gross_amount)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a'}}>{fmtX(w.gst_amount)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#c87030'}}>−{fmtX(w.tds_amount)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e',fontWeight:700}}>{fmtX(w.net_payable)}</td>
                       <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:10}}>{w.utr_reference||'—'}</td>
                       <td style={{color:'#8a7e72',fontSize:10}}>{w.notes||'—'}</td>
-                      <td><button onClick={()=>askDelete('wppay',w.id,`Payment of ${fmtL(w.net_payable)}`,()=>deleteWPPayment(w.id))} style={{background:'#fef0f0',border:'1px solid #e8d0d0',color:'#b85a5a',borderRadius:3,padding:'3px 7px',cursor:'pointer',fontSize:9,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
+                      <td><button onClick={()=>askDelete('wppay',w.id,`Payment of ${fmtX(w.net_payable)}`,()=>deleteWPPayment(w.id))} style={{background:'#fef0f0',border:'1px solid #e8d0d0',color:'#b85a5a',borderRadius:3,padding:'3px 7px',cursor:'pointer',fontSize:9,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
                     </tr>
                   ))}</tbody>
                 </table>
@@ -2705,15 +2706,15 @@ export default function DashboardPage() {
                     <td style={{fontWeight:500}}>{cust?.name||'—'}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:11}}>{pi.po_id||'—'}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72'}}>{pi.pi_date}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtL(pi.amount)}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a'}}>{fmtL(pi.gst_amount)}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#4a8fa8',fontWeight:600}}>{fmtL(pi.total_amount)}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtL(pi.advance_due)}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtX(pi.amount)}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a'}}>{fmtX(pi.gst_amount)}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#4a8fa8',fontWeight:600}}>{fmtX(pi.total_amount)}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtX(pi.advance_due)}</td>
                     <td style={{fontFamily:"'DM Mono',monospace"}}>
                       <input style={{...inp,width:120,fontSize:11,padding:'3px 8px',color:'#5a9e6f'}} type="number" defaultValue={pi.advance_received}
                         onBlur={e=>{ if(Number(e.target.value)!==Number(pi.advance_received)) updatePIField(pi.id,'advance_received',Number(e.target.value)); }}/>
                     </td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:bal>0?'#b85a5a':'#5a9e6f',fontWeight:700}}>{fmtL(bal)}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:bal>0?'#b85a5a':'#5a9e6f',fontWeight:700}}>{fmtX(bal)}</td>
                     <td><span className="chip" style={{color:sc[pi.status],borderColor:sc[pi.status]+'40',background:sc[pi.status]+'15'}}>{pi.status}</span></td>
                     <td><button onClick={()=>askDelete('pi',pi.id,`PI ${pi.pi_number}`,()=>deletePI(pi.id))} style={{background:'#d4cdc2',border:'1px solid #c8c0b4',color:'#b85a5a',borderRadius:2,padding:'4px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
                   </tr>;
@@ -2815,7 +2816,7 @@ export default function DashboardPage() {
                 const net=inv.qty*inv.unit_price-Number(inv.discount_amount||0);
                 const gst=net*(Number(inv.gst_rate||12)/100);
                 const total=net+gst;
-                entries.push({date:inv.invoice_date,type:'Invoice',ref:inv.invoice_no,description:`Tax Invoice — ${inv.qty} units @ ${fmtC(inv.unit_price)}`,debit:total,credit:0,inv});
+                entries.push({date:inv.invoice_date,type:'Invoice',ref:inv.invoice_no,description:`Tax Invoice — ${inv.qty} units @ ${fmtX(inv.unit_price)}`,debit:total,credit:0,inv});
               });
               // If no invoice rows yet, show nothing (no longer use poFinancials estimate)
               // Advance on PO = credit
@@ -2848,7 +2849,7 @@ export default function DashboardPage() {
                     {cust?.customer_code&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'#b8924a'}}>{cust.customer_code}</div>}
                   </div>
                   <div style={{flex:1}}/>
-                  {[['Total Invoiced',fmtL(totalDebit),'#4a8fa8'],['Total Received',fmtL(totalCredit),'#5a9e6f'],['Outstanding',fmtL(outstanding),outstanding>0?'#b85a5a':'#5a9e6f']].map(([l,v,c])=>(
+                  {[['Total Invoiced',fmtX(totalDebit),'#4a8fa8'],['Total Received',fmtX(totalCredit),'#5a9e6f'],['Outstanding',fmtX(outstanding),outstanding>0?'#b85a5a':'#5a9e6f']].map(([l,v,c])=>(
                     <div key={l} style={{textAlign:'right',borderLeft:'1px solid #d4cdc2',paddingLeft:20}}>
                       <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',marginBottom:3}}>{l}</div>
                       <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,color:c,fontWeight:600}}>{v}</div>
@@ -2887,17 +2888,17 @@ export default function DashboardPage() {
                       <td><span className="chip" style={{fontSize:9,color:e.type==='Invoice'?'#b8924a':e.type==='Payment'?'#5a9e6f':e.type==='Credit Note'?'#6a5a9a':'#8a7e72',borderColor:'transparent',background:'transparent'}}>{e.type}</span></td>
                       <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a',fontSize:11}}>{e.ref}</td>
                       <td style={{color:'#6b6259',fontSize:12}}>{e.description}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace",color:e.debit>0?'#b85a5a':'#a09689',fontWeight:e.debit>0?600:400}}>{e.debit>0?fmtL(e.debit):'—'}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace",color:e.credit>0?'#5a9e6f':'#a09689',fontWeight:e.credit>0?600:400}}>{e.credit>0?fmtL(e.credit):'—'}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace",color:e.balance>0?'#b85a5a':e.balance<0?'#5a9e6f':'#8a7e72',fontWeight:700}}>{e.balance>0?`${fmtL(e.balance)} Dr`:e.balance<0?`${fmtL(Math.abs(e.balance))} Cr`:'NIL'}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:e.debit>0?'#b85a5a':'#a09689',fontWeight:e.debit>0?600:400}}>{e.debit>0?fmtX(e.debit):'—'}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:e.credit>0?'#5a9e6f':'#a09689',fontWeight:e.credit>0?600:400}}>{e.credit>0?fmtX(e.credit):'—'}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:e.balance>0?'#b85a5a':e.balance<0?'#5a9e6f':'#8a7e72',fontWeight:700}}>{e.balance>0?`${fmtX(e.balance)} Dr`:e.balance<0?`${fmtX(Math.abs(e.balance))} Cr`:'NIL'}</td>
                       <td>{e.receipt&&<button onClick={()=>askDelete('receipt',e.receipt.id,`Receipt ${e.receipt.receipt_no||e.receipt.id}`,()=>deleteReceipt(e.receipt.id))} style={{background:'#d4cdc2',border:'1px solid #c8c0b4',color:'#b85a5a',borderRadius:2,padding:'3px 7px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace"}}>🗑</button>}</td>
                     </tr>)}
                     {/* Totals row */}
                     {ledger.length>0&&<tr style={{borderTop:'2px solid #d4cdc2'}}>
                       <td colSpan={4} style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'#a09689',padding:'10px 12px'}}>TOTAL</td>
-                      <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a',fontWeight:700}}>{fmtL(totalDebit)}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace",color:'#5a9e6f',fontWeight:700}}>{fmtL(totalCredit)}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace",color:outstanding>0?'#b85a5a':'#5a9e6f',fontWeight:700,fontSize:13}}>{outstanding>0?`${fmtL(outstanding)} Dr`:outstanding<0?`${fmtL(Math.abs(outstanding))} Cr`:'NIL'}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a',fontWeight:700}}>{fmtX(totalDebit)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#5a9e6f',fontWeight:700}}>{fmtX(totalCredit)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:outstanding>0?'#b85a5a':'#5a9e6f',fontWeight:700,fontSize:13}}>{outstanding>0?`${fmtX(outstanding)} Dr`:outstanding<0?`${fmtX(Math.abs(outstanding))} Cr`:'NIL'}</td>
                       <td/>
                     </tr>}
                   </tbody>
@@ -2995,9 +2996,9 @@ export default function DashboardPage() {
               const net=Number(editInvoiceForm.qty)*Number(editInvoiceForm.unit_price)-Number(editInvoiceForm.discount_amount||0);
               const gst=net*(Number(editInvoiceForm.gst_rate||12)/100);
               return <div style={{background:'#f5f0e8',borderRadius:6,padding:'8px 14px',marginBottom:14,fontSize:12,fontFamily:"'DM Mono',monospace",display:'flex',gap:16,flexWrap:'wrap'}}>
-                <span style={{color:'#8a7e72'}}>Net Taxable: <strong style={{color:'#4a8fa8'}}>{fmtL(net)}</strong></span>
-                <span style={{color:'#8a7e72'}}>GST: <strong style={{color:'#6a5a9a'}}>{fmtL(gst)}</strong></span>
-                <span style={{color:'#8a7e72'}}>Total: <strong style={{color:'#2d7fa8'}}>{fmtL(net+gst)}</strong></span>
+                <span style={{color:'#8a7e72'}}>Net Taxable: <strong style={{color:'#4a8fa8'}}>{fmtX(net)}</strong></span>
+                <span style={{color:'#8a7e72'}}>GST: <strong style={{color:'#6a5a9a'}}>{fmtX(gst)}</strong></span>
+                <span style={{color:'#8a7e72'}}>Total: <strong style={{color:'#2d7fa8'}}>{fmtX(net+gst)}</strong></span>
               </div>;
             })()}
             <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
