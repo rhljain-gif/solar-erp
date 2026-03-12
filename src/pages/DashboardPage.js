@@ -1698,15 +1698,15 @@ export default function DashboardPage() {
                 <tbody>{cashAnalytics.monthly.map(m=>(
                   <tr key={m.label}>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a'}}>{m.label}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.cashIn>0?fmtL(m.cashIn):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{m.cashOut>0?fmtL(m.cashOut):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:m.net>=0?'#2d8a5e':'#b85a5a',fontWeight:600}}>{m.cashIn>0||m.cashOut>0?fmtL(m.net):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.advancesIn>0?fmtL(m.advancesIn):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.receiptsIn>0?fmtL(m.receiptsIn):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.mfrPay>0?fmtL(m.mfrPay):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.mfrExp2>0?fmtL(m.mfrExp2):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#c87030'}}>{m.bizExpOut>0?fmtL(m.bizExpOut):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.txnOut>0?fmtL(m.txnOut):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.cashIn>0?fmtX(m.cashIn):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{m.cashOut>0?fmtX(m.cashOut):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:m.net>=0?'#2d8a5e':'#b85a5a',fontWeight:600}}>{m.cashIn>0||m.cashOut>0?fmtX(m.net):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.advancesIn>0?fmtX(m.advancesIn):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.receiptsIn>0?fmtX(m.receiptsIn):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.mfrPay>0?fmtX(m.mfrPay):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.mfrExp2>0?fmtX(m.mfrExp2):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#c87030'}}>{m.bizExpOut>0?fmtX(m.bizExpOut):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.txnOut>0?fmtX(m.txnOut):'—'}</td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -1918,15 +1918,15 @@ export default function DashboardPage() {
           <div className="sec">Pending Orders</div>
           <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:18}}>
             <KPICard label="Open Orders" val={fmt(analytics.unfulfilled.length)} color="#b8924a"/>
-            <KPICard label="Total Order Value" val={fmtL(analytics.unfulfilled.reduce((s,p)=>s+p.qty*p.unit_price,0))} color="#2d7fa8"/>
+            <KPICard label="Total Order Value (incl. GST)" val={fmtL(analytics.unfulfilled.reduce((s,p)=>s+poFinancials(p).orderedTotal,0))} color="#2d7fa8"/>
             <KPICard label="Advances Received" val={fmtL(analytics.unfulfilled.reduce((s,p)=>s+Number(p.advance),0))} color="#2d8a5e"/>
-            <KPICard label="Balance Pending" val={fmtL(analytics.unfulfilled.reduce((s,p)=>s+Math.max(0,p.qty*p.unit_price-p.advance),0))} color="#b85a5a"/>
+            <KPICard label="Balance Pending (incl. GST)" val={fmtL(analytics.unfulfilled.reduce((s,p)=>{ const fin=poFinancials(p); const due=fin.invRows.length>0?fin.balanceDue:Math.max(0,fin.orderedTotal-fin.advance); return s+due; },0))} color="#b85a5a"/>
           </div>
           <div style={{...card,overflow:'auto'}}>
             <table>
               <thead><tr>{['PO No','Customer','Qty','Order Value','Advance','Balance','Stage','Progress','Invoice No','Invoice Date','Dispatch Date','Update'].map(h=><th key={h}>{h}</th>)}</tr></thead>
               <tbody>{analytics.unfulfilled.length===0?<tr><td colSpan={12} style={{textAlign:'center',color:'#7a6e64',padding:28}}>✓ All orders delivered</td></tr>
-                :analytics.unfulfilled.map(p=>{ const cust=customers.find(c=>c.id===p.customer_id),val=p.qty*p.unit_price,bal=Math.max(0,val-p.advance); return (
+                :analytics.unfulfilled.map(p=>{ const cust=customers.find(c=>c.id===p.customer_id),fin=poFinancials(p),val=fin.orderedTotal,bal=fin.invRows.length>0?fin.balanceDue:Math.max(0,fin.orderedTotal-fin.advance); return (
                   <tr key={p.id}>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a'}}>{p.id}</td>
                     <td style={{fontWeight:500}}>{cust?.name||'—'}</td>
