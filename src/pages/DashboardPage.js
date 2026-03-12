@@ -1816,7 +1816,7 @@ export default function DashboardPage() {
         {view==='gst'&&(<div>
           <div className="sec">GST Summary</div>
           <FYSelector/>
-          {gstAnalytics?(<>
+          {gstAnalytics&&(<>
             <div style={{background:'#fdf6ec',border:'1px solid #e0d8cc',borderRadius:6,padding:'10px 14px',marginBottom:16,fontSize:11,color:'#8a7e72',fontFamily:"'DM Mono',monospace",display:'flex',alignItems:'center',gap:8}}>
               <span>📌</span>
               <span>Sales GST Rate: <strong style={{color:'#b8924a'}}>{gstAnalytics.ratePct}</strong> — configurable in Settings. Input GST on expenses uses each expense's own rate.</span>
