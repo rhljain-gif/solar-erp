@@ -1164,7 +1164,13 @@ export default function DashboardPage() {
     const totalPurchCost   = pos.reduce((s,p)=>s+p.qty*Number(p.purchase_price),0)+totalFOCCost;
     const totalBizExp      = bizExp.reduce((s,e)=>s+Number(e.total_amount),0);
     const totalProfit      = totalNetSales-totalPurchCost-totalBizExp;
-    const pendingAdvance   = pos.filter(p=>p.status!=='Delivered / Fulfilled').reduce((s,p)=>s+poFinancials(p).balanceDue,0);
+    // pendingAdvance: if invoices exist use invoicedAmt-advance, else use orderedTotal-advance
+    // This ensures POs with no invoices yet still show their full outstanding balance
+    const pendingAdvance   = pos.filter(p=>p.status!=='Delivered / Fulfilled').reduce((s,p)=>{
+      const fin=poFinancials(p);
+      const due = fin.invRows.length>0 ? fin.balanceDue : Math.max(0, fin.orderedTotal - fin.advance);
+      return s+due;
+    },0);
     const avgSP            = totalUnits>0?totalNetSales/totalUnits:0;
     const unfulfilled      = pos.filter(p=>p.status!=='Delivered / Fulfilled');
 
@@ -1188,7 +1194,11 @@ export default function DashboardPage() {
       const margin=netSales>0?(profit/netSales)*100:0;
       const advance=cPOs.reduce((s,p)=>s+Number(p.advance),0);
       // Pending balance based on delivered qty
-      const pending=cPOs.filter(p=>p.status!=='Delivered / Fulfilled').reduce((s,p)=>s+poFinancials(p).balanceDue,0);
+      const pending=cPOs.filter(p=>p.status!=='Delivered / Fulfilled').reduce((s,p)=>{
+        const fin=poFinancials(p);
+        const due = fin.invRows.length>0 ? fin.balanceDue : Math.max(0, fin.orderedTotal - fin.advance);
+        return s+due;
+      },0);
       return {...cust,grossSales,totalQty,cnVal,focUnits,focCost,netSales,purchCost,profit,avgSP:avgSP2,avgPP,margin,advance,pending,atRisk:totalQty>0&&avgSP2<avgPP};
     });
 
@@ -1282,7 +1292,7 @@ export default function DashboardPage() {
     const today=new Date();
     const aged=pos.filter(p=>p.status!=='Delivered / Fulfilled').map(p=>{
       const fin=poFinancials(p);
-      const bal=fin.balanceDue;
+      const bal = fin.invRows.length>0 ? fin.balanceDue : Math.max(0, fin.orderedTotal - fin.advance);
       const days=Math.floor((today-new Date(p.po_date))/(1000*86400));
       const bucket=days<=30?'0-30':days<=60?'31-60':days<=90?'61-90':'90+';
       return {...p,bal,days,bucket,custName:customers.find(c=>c.id===p.customer_id)?.name||'—'};
