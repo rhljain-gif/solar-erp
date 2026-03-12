@@ -81,6 +81,140 @@ const catColor = cat => ({'Salary':'#2d7fa8','Rent':'#6a5a9a','Travel':'#c87030'
 
 
 
+
+// WattPower Payment Calculator Panel — inline in Orders table
+const WPCalculatorPanel = ({po, wpPayments, wpForm, setWpForm, onLog, saving, settings, inp, lbl, btn, fmtL, fmtC}) => {
+  const paidQty    = wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+w.qty,0);
+  const paidAmt    = wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+Number(w.net_payable),0);
+  const unpaidQty  = po.qty - paidQty;
+
+  const qty        = Number(wpForm.qty)||0;
+  const unitPrice  = Number(po.purchase_price)||0;
+  const gstRate    = Number(settings.purchase_gst_rate??5);
+  const tdsRate    = Number(settings.tds_rate??0.1);
+  const gross      = qty * unitPrice;
+  const gstAmt     = parseFloat((gross * gstRate / 100).toFixed(2));
+  const tdsAmt     = parseFloat((gross * tdsRate / 100).toFixed(2));
+  const netPayable = parseFloat((gross + gstAmt - tdsAmt).toFixed(2));
+
+  return (
+    <div style={{padding:'16px 20px'}}>
+
+      {/* Summary strip */}
+      <div style={{display:'flex',gap:24,marginBottom:14,flexWrap:'wrap'}}>
+        <div style={{background:'#f5f0e8',borderRadius:6,padding:'10px 16px',display:'flex',gap:20,fontSize:12,fontFamily:"'DM Mono',monospace",alignItems:'center',flex:1}}>
+          <span style={{color:'#8a7e72'}}>Purchase Price: <strong style={{color:po.delivery_type==='DDP'?'#2d7fa8':'#2d8a5e'}}>{fmtC(unitPrice)} <span style={{fontSize:10,background:po.delivery_type==='DDP'?'#dce8ed':'#dceadc',color:po.delivery_type==='DDP'?'#4a8fa8':'#5a9e6f',borderRadius:2,padding:'1px 5px'}}>{po.delivery_type}</span></strong></span>
+          <span style={{color:'#8a7e72'}}>Total Ordered: <strong style={{color:'#2c2520'}}>{po.qty} units</strong></span>
+          <span style={{color:'#8a7e72'}}>Already Paid: <strong style={{color:'#2d8a5e'}}>{paidQty} units ({fmtL(paidAmt)})</strong></span>
+          <span style={{color:'#8a7e72'}}>Unpaid: <strong style={{color:unpaidQty>0?'#b85a5a':'#2d8a5e'}}>{unpaidQty} units</strong></span>
+          <span style={{color:'#8a7e72'}}>GST: <strong style={{color:'#6a5a9a'}}>{gstRate}%</strong></span>
+          <span style={{color:'#8a7e72'}}>TDS: <strong style={{color:'#c87030'}}>{tdsRate}%</strong></span>
+        </div>
+      </div>
+
+      {/* Calculator + log form */}
+      {unpaidQty>0&&(
+        <div style={{background:'#fdf6ec',border:'1px dashed #b8924a',borderRadius:6,padding:'14px 16px',marginBottom:14}}>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#b8924a',letterSpacing:'.12em',marginBottom:12}}>PAYMENT CALCULATOR — {unpaidQty} UNIT{unpaidQty>1?'S':''} UNPAID</div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,alignItems:'flex-end',marginBottom:12}}>
+            <div>
+              <label style={lbl}>Units to Dispatch *</label>
+              <input style={{...inp,borderColor:'#b8924a',fontFamily:"'DM Mono',monospace",fontSize:14,fontWeight:600}} type="number" min="1" max={unpaidQty}
+                placeholder={`max ${unpaidQty}`} value={wpForm.qty}
+                onChange={e=>setWpForm({...wpForm,qty:e.target.value})}/>
+            </div>
+            <div>
+              <label style={lbl}>Payment Date *</label>
+              <input style={inp} type="date" value={wpForm.payment_date}
+                onChange={e=>setWpForm({...wpForm,payment_date:e.target.value})}/>
+            </div>
+            <div>
+              <label style={lbl}>UTR / Reference</label>
+              <input style={inp} type="text" placeholder="Bank transfer ref" value={wpForm.utr_reference||''}
+                onChange={e=>setWpForm({...wpForm,utr_reference:e.target.value})}/>
+            </div>
+            <div>
+              <label style={lbl}>Notes</label>
+              <input style={inp} type="text" value={wpForm.notes||''}
+                onChange={e=>setWpForm({...wpForm,notes:e.target.value})}/>
+            </div>
+          </div>
+
+          {/* Live breakdown — always visible, updates as qty typed */}
+          <div style={{background:'#fff8f0',border:'1px solid #e0d8cc',borderRadius:6,padding:'14px 18px',marginBottom:12}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',letterSpacing:'.12em',marginBottom:10}}>PAYMENT BREAKDOWN</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:0}}>
+              {[
+                ['Units',qty||'—','#2c2520'],
+                ['× Unit Price',qty?fmtC(unitPrice):'—','#8a7e72'],
+                ['Gross Amount',qty?fmtL(gross):'—','#b8924a'],
+                [`+ GST @ ${gstRate}%`,qty?fmtL(gstAmt):'—','#6a5a9a'],
+                [`− TDS @ ${tdsRate}%`,qty?fmtL(tdsAmt):'—','#c87030'],
+              ].map(([label,val,color])=>(
+                <div key={label} style={{padding:'8px 12px',borderRight:'1px solid #e0d8cc'}}>
+                  <div style={{fontSize:9,color:'#a09689',fontFamily:"'DM Mono',monospace",marginBottom:4}}>{label}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color,fontWeight:500}}>{val}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{marginTop:10,padding:'10px 12px',background:qty?'#e8f4ec':'#f5f0e8',borderRadius:4,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'#8a7e72'}}>NET AMOUNT TO PAY WATTPOWER</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,fontWeight:700,color:qty?'#2d8a5e':'#a09689'}}>{qty?fmtL(netPayable):'Enter qty above'}</div>
+            </div>
+            {qty>0&&<div style={{marginTop:6,fontSize:10,color:'#8a7e72',fontFamily:"'DM Mono',monospace"}}>
+              = {fmtL(gross)} (gross) + {fmtL(gstAmt)} (GST {gstRate}%) − {fmtL(tdsAmt)} (TDS {tdsRate}%) = <strong style={{color:'#2d8a5e'}}>{fmtL(netPayable)}</strong>
+            </div>}
+          </div>
+
+          <div style={{display:'flex',justifyContent:'flex-end'}}>
+            <button onClick={onLog} disabled={saving||!qty||!wpForm.payment_date}
+              style={{...btn(saving||!qty||!wpForm.payment_date),padding:'10px 28px'}}>
+              {saving?'Saving…':'LOG PAYMENT →'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Past payments for this PO */}
+      {wpPayments.filter(w=>w.po_id===po.id).length>0&&(
+        <div>
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',letterSpacing:'.12em',marginBottom:8}}>PAYMENTS LOGGED</div>
+          <table>
+            <thead><tr>{['Date','Qty','Type','Unit Price','Gross','GST','TDS','Net Paid','UTR','Notes',''].map(h=><th key={h} style={{fontSize:9,padding:'4px 8px'}}>{h}</th>)}</tr></thead>
+            <tbody>{wpPayments.filter(w=>w.po_id===po.id).sort((a,b)=>a.payment_date>b.payment_date?1:-1).map(w=>(
+              <tr key={w.id}>
+                <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:11}}>{w.payment_date}</td>
+                <td style={{fontFamily:"'DM Mono',monospace",fontWeight:600,textAlign:'center'}}>{w.qty}</td>
+                <td><span style={{fontSize:10,background:w.delivery_type==='DDP'?'#dce8ed':'#dceadc',color:w.delivery_type==='DDP'?'#4a8fa8':'#5a9e6f',borderRadius:2,padding:'1px 5px',fontFamily:"'DM Mono',monospace"}}>{w.delivery_type}</span></td>
+                <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtC(w.unit_purchase_price)}</td>
+                <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a'}}>{fmtL(w.gross_amount)}</td>
+                <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a'}}>{fmtL(w.gst_amount)}</td>
+                <td style={{fontFamily:"'DM Mono',monospace",color:'#c87030'}}>−{fmtL(w.tds_amount)}</td>
+                <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e',fontWeight:700}}>{fmtL(w.net_payable)}</td>
+                <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:10}}>{w.utr_reference||'—'}</td>
+                <td style={{color:'#8a7e72',fontSize:10}}>{w.notes||'—'}</td>
+                <td><button onClick={()=>askDelete('wppay',w.id,`Payment of ${fmtL(w.net_payable)} on ${w.payment_date}`,()=>deleteWPPayment(w.id))} style={{background:'#fef0f0',border:'1px solid #e8d0d0',color:'#b85a5a',borderRadius:3,padding:'3px 7px',cursor:'pointer',fontSize:9,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
+              </tr>
+            ))}</tbody>
+            <tfoot><tr>
+              <td colSpan={2} style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',padding:'6px 8px'}}>TOTAL PAID</td>
+              <td/><td/>
+              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#b8924a'}}>{fmtL(wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+Number(w.gross_amount),0))}</td>
+              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#6a5a9a'}}>{fmtL(wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+Number(w.gst_amount),0))}</td>
+              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#c87030'}}>−{fmtL(wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+Number(w.tds_amount),0))}</td>
+              <td style={{fontFamily:"'DM Mono',monospace",fontWeight:700,color:'#2d8a5e',fontSize:13}}>{fmtL(paidAmt)}</td>
+              <td colSpan={3}/>
+            </tr></tfoot>
+          </table>
+        </div>
+      )}
+      {unpaidQty===0&&wpPayments.filter(w=>w.po_id===po.id).length>0&&(
+        <div style={{fontSize:11,color:'#2d8a5e',fontFamily:"'DM Mono',monospace",marginTop:8}}>✓ All {po.qty} units paid to WattPower</div>
+      )}
+    </div>
+  );
+};
+
 // Inline invoice sub-panel for Orders tab
 const POInvoicePanel = ({po, fin, poInvoices, invoiceForm, setInvoiceForm, onAdd, onEdit, onDelete, saving, settings, inp, lbl, btn, fmtL, fmtC, fmt}) => {
   const invRows = poInvoices.filter(i=>i.po_id===po.id);
@@ -256,8 +390,9 @@ export default function DashboardPage() {
   const [sites,setSites]       = useState([]);
   const [receipts,setReceipts] = useState([]);
   const [poInvoices,setPoInvoices] = useState([]);
+  const [wpPayments,setWpPayments] = useState([]);
   const [ledgerCust,setLedgerCust] = useState(null);
-  const [settings,setSettings] = useState({default_purchase_price_exw:400000,default_purchase_price_ddp:403000,gst_rate_sales:12});
+  const [settings,setSettings] = useState({default_purchase_price_exw:400000,default_purchase_price_ddp:403000,gst_rate_sales:12,purchase_gst_rate:5,tds_rate:0.1});
   const [loading,setLoading]   = useState(true);
   const [saving,setSaving]     = useState(false);
   const [toast,setToast]       = useState('');
@@ -271,6 +406,7 @@ export default function DashboardPage() {
   const [selectedFY,setFY]     = useState(currentFY);
   const [expandedMfrCN,setExpandedMfrCN] = useState(null);
   const [expandedPOInv,setExpandedPOInv] = useState(null); // po_id
+  const [expandedWPCalc,setExpandedWPCalc] = useState(null); // po_id
   const [expCatFilter,setExpCatFilter]   = useState('All');
   const [searchPO,setSearchPO]           = useState('');
   const [searchCust,setSearchCust]       = useState('');
@@ -301,7 +437,7 @@ export default function DashboardPage() {
   const [vendorForm,setVendorForm] = useState({name:'',vendor_type:'Manufacturer',gstin:'',contact_name:'',phone:'',email:'',address:'',notes:''});
   const [deliveryForm,setDeliveryForm] = useState({po_id:'',delivery_date:'',qty_delivered:'',notes:''});
   const [sim,setSim]             = useState({customerId:'',extraCN:'',extraFOC:'',newPoQty:'',newPoUnitPrice:'',newPoPurchasePrice:'',newPoCNAmount:'',newPoFOCUnits:''});
-  const [settingsForm,setSettingsForm] = useState({exw:'',ddp:'',gst_rate:''});
+  const [settingsForm,setSettingsForm] = useState({exw:'',ddp:'',gst_rate:'',purchase_gst_rate:'',tds_rate:''});
   const [mfrCNForm,setMfrCNForm] = useState({cn_ref:'',cn_date:'',total_value:'',description:''});
   const [expForm,setExpForm]     = useState({mfr_cn_id:'',expense_name:'',expense_date:'',amount:'',gst_rate:'18',vendor_name:'',invoice_ref:'',notes:''});
   const [pipeForm,setPipeForm]   = useState({customer_id:'',expected_qty:'',expected_value:'',expected_date:'',delivery_type:'DDP',probability:'75',notes:'',status:'Active'});
@@ -312,6 +448,7 @@ export default function DashboardPage() {
   const [siteForm,setSiteForm]   = useState({po_id:'',site_name:'',address:'',gstin:'',contact_name:'',phone:'',qty:'',notes:''});
   const [receiptForm,setReceiptForm] = useState({receipt_no:'',customer_id:'',po_id:'',receipt_date:'',amount:'',payment_mode:'Bank Transfer',reference:'',notes:''});
   const [invoiceForm,setInvoiceForm] = useState({po_id:'',invoice_no:'',invoice_date:'',qty:'',unit_price:'',discount_amount:'0',gst_rate:'',notes:''});
+  const [wpForm,setWpForm] = useState({po_id:'',payment_date:'',qty:'',utr_reference:'',notes:''});
   const [editInvoice,setEditInvoice] = useState(null);
   const [editInvoiceForm,setEditInvoiceForm] = useState({});
 
@@ -458,7 +595,7 @@ export default function DashboardPage() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const [r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15,r16] = await Promise.all([
+    const [r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,r13,r14,r15,r16,r17] = await Promise.all([
       supabase.from('customers').select('*').order('id'),
       supabase.from('purchase_orders').select('*').order('created_at'),
       supabase.from('credit_notes').select('*').order('created_at'),
@@ -475,17 +612,18 @@ export default function DashboardPage() {
       supabase.from('delivery_sites').select('*').order('created_at'),
       supabase.from('payment_receipts').select('*').order('receipt_date',{ascending:false}),
       supabase.from('po_invoices').select('*').order('invoice_date',{ascending:false}),
+      supabase.from('wattpower_payments').select('*').order('payment_date',{ascending:false}),
     ]);
     setCust(r1.data||[]);  setPos(r2.data||[]);  setCns(r3.data||[]);
     setMfrCNs(r5.data||[]); setMfrExp(r6.data||[]);
     setTargets(r7.data||[]); setPipeline(r8.data||[]);
     setCashTxns(r9.data||[]); setBizExp(r10.data||[]);
     setVendors(r11.data||[]); setDeliveries(r12.data||[]);
-    setPIs(r13.data||[]); setSites(r14.data||[]); setReceipts(r15.data||[]); setPoInvoices(r16.data||[]);
+    setPIs(r13.data||[]); setSites(r14.data||[]); setReceipts(r15.data||[]); setPoInvoices(r16.data||[]); setWpPayments(r17.data||[]);
     if (r4.data) {
       const p={}; r4.data.forEach(r=>{ p[r.key]=Number(r.value); });
       setSettings(p);
-      setSettingsForm({exw:p.default_purchase_price_exw,ddp:p.default_purchase_price_ddp,gst_rate:p.gst_rate_sales||12});
+      setSettingsForm({exw:p.default_purchase_price_exw,ddp:p.default_purchase_price_ddp,gst_rate:p.gst_rate_sales||12,purchase_gst_rate:p.purchase_gst_rate||5,tds_rate:p.tds_rate||0.1});
       setPoForm(blankPO(p));
     }
     setLoading(false);
@@ -679,6 +817,8 @@ export default function DashboardPage() {
       {key:'default_purchase_price_exw',value:String(settingsForm.exw),label:'EXW',updated_at:new Date().toISOString()},
       {key:'default_purchase_price_ddp',value:String(settingsForm.ddp),label:'DDP',updated_at:new Date().toISOString()},
       {key:'gst_rate_sales',value:String(settingsForm.gst_rate),label:'GST Rate on Sales (%)',updated_at:new Date().toISOString()},
+      {key:'purchase_gst_rate',value:String(settingsForm.purchase_gst_rate||5),label:'GST Rate on WattPower Purchases (%)',updated_at:new Date().toISOString()},
+      {key:'tds_rate',value:String(settingsForm.tds_rate||0.1),label:'TDS Rate on WattPower Payments (%)',updated_at:new Date().toISOString()},
     ],{onConflict:'key'});
     if (error) showToast('Error: '+error.message, 'error');
     else { showToast('Settings saved ✓'); await fetchAll(); }
@@ -840,6 +980,58 @@ export default function DashboardPage() {
     showToast('Receipt deleted'); await fetchAll(); setSaving(false);
   };
 
+
+
+  // ── WattPower Payments CRUD ──────────────────────────────────────────────
+  const calcWPPayment = (po, qty) => {
+    const units       = Number(qty) || 0;
+    const unitPrice   = Number(po?.purchase_price) || 0;
+    const gstRate     = Number(settings.purchase_gst_rate ?? 5);
+    const tdsRate     = Number(settings.tds_rate ?? 0.1);
+    const gross       = units * unitPrice;
+    const gstAmt      = parseFloat((gross * gstRate / 100).toFixed(2));
+    const tdsAmt      = parseFloat((gross * tdsRate / 100).toFixed(2));
+    const netPayable  = parseFloat((gross + gstAmt - tdsAmt).toFixed(2));
+    return { units, unitPrice, gross, gstRate, gstAmt, tdsRate, tdsAmt, netPayable };
+  };
+
+  const addWPPayment = async (poId) => {
+    const f = wpForm;
+    if (!f.payment_date||!f.qty) { showToast('Fill payment date and qty','error'); return; }
+    const po = pos.find(p=>p.id===poId);
+    if (!po) return;
+    const calc = calcWPPayment(po, f.qty);
+    if (calc.gross <= 0) { showToast('Invalid qty or purchase price','error'); return; }
+    setSaving(true);
+    const {error}=await supabase.from('wattpower_payments').insert([{
+      po_id:         poId,
+      payment_date:  f.payment_date,
+      qty:           calc.units,
+      unit_purchase_price: calc.unitPrice,
+      delivery_type: po.delivery_type,
+      gross_amount:  calc.gross,
+      gst_rate:      calc.gstRate,
+      gst_amount:    calc.gstAmt,
+      tds_rate:      calc.tdsRate,
+      tds_amount:    calc.tdsAmt,
+      net_payable:   calc.netPayable,
+      utr_reference: f.utr_reference||null,
+      notes:         f.notes||null,
+    }]);
+    if (error) showToast('Error: '+error.message,'error');
+    else {
+      showToast('Payment logged ✓');
+      setWpForm({po_id:'',payment_date:'',qty:'',utr_reference:'',notes:''});
+      await fetchAll();
+    }
+    setSaving(false);
+  };
+
+  const deleteWPPayment = async (id) => {
+    setSaving(true);
+    await supabase.from('wattpower_payments').delete().eq('id',id);
+    showToast('Payment deleted'); await fetchAll(); setSaving(false);
+  };
 
   // ── PO Invoices CRUD ─────────────────────────────────────────────────────
   const addPOInvoice = async (poId) => {
@@ -1821,10 +2013,16 @@ export default function DashboardPage() {
                     </div>
                   </td>
                   <td>
-                    <button onClick={()=>setExpandedPOInv(expandedPOInv===p.id?null:p.id)}
-                      style={{background:expandedPOInv===p.id?'#e8f4ec':'#fdf6ec',border:`1px solid ${expandedPOInv===p.id?'#5a9e6f':'#e0d8cc'}`,color:expandedPOInv===p.id?'#2d8a5e':'#b8924a',borderRadius:4,padding:'4px 10px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}>
-                      🧾 {fin.invRows.length} {expandedPOInv===p.id?'▲':'▼'}
-                    </button>
+                    <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                      <button onClick={()=>{ setExpandedPOInv(expandedPOInv===p.id?null:p.id); setExpandedWPCalc(null); }}
+                        style={{background:expandedPOInv===p.id?'#e8f4ec':'#fdf6ec',border:`1px solid ${expandedPOInv===p.id?'#5a9e6f':'#e0d8cc'}`,color:expandedPOInv===p.id?'#2d8a5e':'#b8924a',borderRadius:4,padding:'3px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}>
+                        🧾 {fin.invRows.length} {expandedPOInv===p.id?'▲':'▼'}
+                      </button>
+                      <button onClick={()=>{ setExpandedWPCalc(expandedWPCalc===p.id?null:p.id); setExpandedPOInv(null); setWpForm({po_id:p.id,payment_date:'',qty:'',utr_reference:'',notes:''}); }}
+                        style={{background:expandedWPCalc===p.id?'#e8f0fc':'#fdf6ec',border:`1px solid ${expandedWPCalc===p.id?'#6a5a9a':'#e0d8cc'}`,color:expandedWPCalc===p.id?'#6a5a9a':'#b8924a',borderRadius:4,padding:'3px 8px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}>
+                        💰 Pay {expandedWPCalc===p.id?'▲':'▼'}
+                      </button>
+                    </div>
                   </td>
                 </tr>
                 {expandedPOInv===p.id&&(
@@ -1833,6 +2031,15 @@ export default function DashboardPage() {
                       <POInvoicePanel po={p} fin={fin} poInvoices={poInvoices} invoiceForm={invoiceForm} setInvoiceForm={setInvoiceForm}
                         onAdd={()=>addPOInvoice(p.id)} onEdit={openEditInvoice} onDelete={id=>askDelete('poinv',id,`Invoice`,()=>deletePOInvoice(id))}
                         saving={saving} settings={settings} inp={inp} lbl={lbl} btn={btn} fmtL={fmtL} fmtC={fmtC} fmt={fmt}/>
+                    </td>
+                  </tr>
+                )}
+                {expandedWPCalc===p.id&&(
+                  <tr key={`wp-${p.id}`}>
+                    <td colSpan={17} style={{padding:0,background:'#f0ecf8',borderBottom:'2px solid #6a5a9a30'}}>
+                      <WPCalculatorPanel po={p} wpPayments={wpPayments} wpForm={wpForm} setWpForm={setWpForm}
+                        onLog={()=>addWPPayment(p.id)} saving={saving} settings={settings}
+                        inp={inp} lbl={lbl} btn={btn} fmtL={fmtL} fmtC={fmtC}/>
                     </td>
                   </tr>
                 )}
@@ -2159,6 +2366,167 @@ export default function DashboardPage() {
             </div>
           ))}
         </div>)}
+
+
+        {/* ════ WATTPOWER PAYMENTS ════ */}
+        {view==='wppayments'&&(()=>{
+          const totalPaid    = wpPayments.reduce((s,w)=>s+Number(w.net_payable),0);
+          const totalGross   = wpPayments.reduce((s,w)=>s+Number(w.gross_amount),0);
+          const totalGST     = wpPayments.reduce((s,w)=>s+Number(w.gst_amount),0);
+          const totalTDS     = wpPayments.reduce((s,w)=>s+Number(w.tds_amount),0);
+          const totalUnitsPaid = wpPayments.reduce((s,w)=>s+w.qty,0);
+
+          // Per-PO summary
+          const poPaid = pos.map(p=>{
+            const pw = wpPayments.filter(w=>w.po_id===p.id);
+            const paidQty  = pw.reduce((s,w)=>s+w.qty,0);
+            const paidAmt  = pw.reduce((s,w)=>s+Number(w.net_payable),0);
+            const unpaidQty = p.qty - paidQty;
+            const unpaidAmt = unpaidQty * Number(p.purchase_price);
+            const gstRate   = Number(settings.purchase_gst_rate??5);
+            const tdsRate   = Number(settings.tds_rate??0.1);
+            const unpaidNet = parseFloat((unpaidAmt + unpaidAmt*gstRate/100 - unpaidAmt*tdsRate/100).toFixed(2));
+            return {...p,paidQty,paidAmt,unpaidQty,unpaidNet,payments:pw};
+          }).filter(p=>p.payments.length>0||p.status!=='Delivered / Fulfilled');
+
+          return <div>
+            <div className="sec">WattPower Payments</div>
+
+            {/* KPI cards */}
+            <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:14,marginBottom:20}}>
+              <KPICard label="Total Paid (Net)" val={fmtL(totalPaid)} color="#2d8a5e"/>
+              <KPICard label="Total Gross" val={fmtL(totalGross)} color="#b8924a"/>
+              <KPICard label="Total GST Paid" val={fmtL(totalGST)} color="#6a5a9a"/>
+              <KPICard label="Total TDS Deducted" val={fmtL(totalTDS)} color="#c87030"/>
+              <KPICard label="Units Paid For" val={fmt(totalUnitsPaid)} color="#2d7fa8"/>
+            </div>
+
+            {/* Quick calculator — standalone, not tied to a PO */}
+            <div style={{...card,padding:20,marginBottom:20}}>
+              <div style={{fontSize:11,color:'#6a5a9a',fontFamily:"'DM Mono',monospace",marginBottom:14}}>⚡ QUICK CALCULATOR</div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:14,marginBottom:12}}>
+                <div>
+                  <label style={lbl}>Purchase Order</label>
+                  <select style={inp} value={wpForm.po_id} onChange={e=>{
+                    const po=pos.find(p=>p.id===e.target.value);
+                    setWpForm({...wpForm,po_id:e.target.value,qty:''});
+                  }}>
+                    <option value="">Select PO…</option>
+                    {pos.filter(p=>p.status!=='Delivered / Fulfilled').map(p=>{
+                      const c=customers.find(x=>x.id===p.customer_id);
+                      const pw=wpPayments.filter(w=>w.po_id===p.id).reduce((s,w)=>s+w.qty,0);
+                      const rem=p.qty-pw;
+                      return <option key={p.id} value={p.id}>{p.id} — {c?.name} ({rem} unpaid)</option>;
+                    })}
+                  </select>
+                </div>
+                <div>
+                  <label style={lbl}>Units to Dispatch</label>
+                  <input style={{...inp,fontFamily:"'DM Mono',monospace",fontWeight:600}} type="number" min="1"
+                    value={wpForm.qty} onChange={e=>setWpForm({...wpForm,qty:e.target.value})}
+                    placeholder="Enter qty"/>
+                </div>
+                <div>
+                  <label style={lbl}>Payment Date</label>
+                  <input style={inp} type="date" value={wpForm.payment_date}
+                    onChange={e=>setWpForm({...wpForm,payment_date:e.target.value})}/>
+                </div>
+                <div>
+                  <label style={lbl}>UTR / Reference</label>
+                  <input style={inp} type="text" placeholder="Bank transfer ref"
+                    value={wpForm.utr_reference||''} onChange={e=>setWpForm({...wpForm,utr_reference:e.target.value})}/>
+                </div>
+                <div>
+                  <label style={lbl}>Notes</label>
+                  <input style={inp} type="text" value={wpForm.notes||''}
+                    onChange={e=>setWpForm({...wpForm,notes:e.target.value})}/>
+                </div>
+              </div>
+
+              {/* Live breakdown */}
+              {(()=>{
+                const po = pos.find(p=>p.id===wpForm.po_id);
+                const qty = Number(wpForm.qty)||0;
+                if (!po) return <div style={{fontSize:12,color:'#a09689',fontFamily:"'DM Mono',monospace",padding:'10px 0'}}>← Select a PO to calculate</div>;
+                const unitPrice = Number(po.purchase_price);
+                const gstRate   = Number(settings.purchase_gst_rate??5);
+                const tdsRate   = Number(settings.tds_rate??0.1);
+                const gross     = qty * unitPrice;
+                const gstAmt    = parseFloat((gross*gstRate/100).toFixed(2));
+                const tdsAmt    = parseFloat((gross*tdsRate/100).toFixed(2));
+                const net       = parseFloat((gross+gstAmt-tdsAmt).toFixed(2));
+                const paidQty   = wpPayments.filter(w=>w.po_id===po.id).reduce((s,w)=>s+w.qty,0);
+                const unpaidQty = po.qty - paidQty;
+                return <>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:0,background:'#fff8f0',border:'1px solid #e0d8cc',borderRadius:6,overflow:'hidden',marginBottom:10}}>
+                    {[
+                      ['PO Type',<span style={{fontSize:12,background:po.delivery_type==='DDP'?'#dce8ed':'#dceadc',color:po.delivery_type==='DDP'?'#4a8fa8':'#5a9e6f',borderRadius:2,padding:'2px 8px',fontFamily:"'DM Mono',monospace"}}>{po.delivery_type}</span>,''],
+                      ['Unit Purchase Price',fmtC(unitPrice),'#b8924a'],
+                      ['Gross Amount',qty?fmtL(gross):'—','#2c2520'],
+                      [`GST @ ${gstRate}%`,qty?fmtL(gstAmt):'—','#6a5a9a'],
+                      [`TDS @ ${tdsRate}%`,qty?`− ${fmtL(tdsAmt)}`:'—','#c87030'],
+                      ['NET PAYABLE',qty?fmtL(net):'—','#2d8a5e'],
+                    ].map(([label,val,color],i)=>(
+                      <div key={label} style={{padding:'10px 14px',borderRight:i<5?'1px solid #e0d8cc':'none',background:i===5?'#e8f4ec':'transparent'}}>
+                        <div style={{fontSize:9,color:'#a09689',fontFamily:"'DM Mono',monospace",marginBottom:4}}>{label}</div>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:i===5?18:14,color,fontWeight:i===5?700:500}}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {qty>0&&<div style={{fontSize:10,color:'#8a7e72',fontFamily:"'DM Mono',monospace",marginBottom:10}}>
+                    {fmtL(gross)} + {fmtL(gstAmt)} (GST) − {fmtL(tdsAmt)} (TDS) = <strong style={{color:'#2d8a5e'}}>{fmtL(net)}</strong>
+                    {qty>unpaidQty&&<span style={{color:'#b85a5a',marginLeft:12}}>⚠ Only {unpaidQty} units unpaid on this PO</span>}
+                  </div>}
+                  <div style={{display:'flex',justifyContent:'flex-end'}}>
+                    <button onClick={()=>addWPPayment(po.id)} disabled={saving||!qty||!wpForm.payment_date}
+                      style={{...btn(saving||!qty||!wpForm.payment_date,'#2d8a5e','#f5f0e8'),padding:'10px 32px'}}>
+                      {saving?'Saving…':'LOG PAYMENT →'}
+                    </button>
+                  </div>
+                </>;
+              })()}
+            </div>
+
+            {/* Per-PO payment status */}
+            <div className="sec">Payment Status by PO</div>
+            {poPaid.length===0&&<div style={{textAlign:'center',color:'#a09689',padding:32,fontSize:13}}>No payments logged yet. Use the calculator above.</div>}
+            {poPaid.filter(p=>p.payments.length>0).map(p=>{
+              const cust=customers.find(c=>c.id===p.customer_id);
+              const pct=p.qty>0?Math.min(100,(p.paidQty/p.qty)*100):0;
+              return <div key={p.id} style={{...card,marginBottom:10,padding:16}}>
+                <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:10,flexWrap:'wrap'}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",color:'#b8924a',fontWeight:600}}>{p.id}</div>
+                  <div style={{fontWeight:500}}>{cust?.name||'—'}</div>
+                  <span style={{fontSize:10,background:p.delivery_type==='DDP'?'#dce8ed':'#dceadc',color:p.delivery_type==='DDP'?'#4a8fa8':'#5a9e6f',borderRadius:2,padding:'1px 6px',fontFamily:"'DM Mono',monospace"}}>{p.delivery_type}</span>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#8a7e72'}}>Total: <strong style={{color:'#2c2520'}}>{p.qty} units</strong></div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#8a7e72'}}>Paid: <strong style={{color:'#2d8a5e'}}>{p.paidQty} units ({fmtL(p.paidAmt)})</strong></div>
+                  {p.unpaidQty>0&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#b85a5a'}}>Unpaid: <strong>{p.unpaidQty} units (~{fmtL(p.unpaidNet)})</strong></div>}
+                  <div style={{flex:1,height:6,background:'#d9d2c7',borderRadius:3,overflow:'hidden',marginLeft:8}}>
+                    <div style={{height:'100%',width:`${pct}%`,background:pct>=100?'#2d8a5e':'#6a5a9a',borderRadius:3,transition:'width .3s'}}/>
+                  </div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:pct>=100?'#2d8a5e':'#6a5a9a'}}>{Math.round(pct)}%</div>
+                </div>
+                <table style={{marginTop:4}}>
+                  <thead><tr>{['Date','Qty','Unit Price','Gross','GST','TDS','Net Paid','UTR','Notes',''].map(h=><th key={h} style={{fontSize:9,padding:'4px 8px'}}>{h}</th>)}</tr></thead>
+                  <tbody>{p.payments.sort((a,b)=>a.payment_date>b.payment_date?1:-1).map(w=>(
+                    <tr key={w.id}>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:11}}>{w.payment_date}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",fontWeight:600,textAlign:'center'}}>{w.qty}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtC(w.unit_purchase_price)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a'}}>{fmtL(w.gross_amount)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a'}}>{fmtL(w.gst_amount)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#c87030'}}>−{fmtL(w.tds_amount)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e',fontWeight:700}}>{fmtL(w.net_payable)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:10}}>{w.utr_reference||'—'}</td>
+                      <td style={{color:'#8a7e72',fontSize:10}}>{w.notes||'—'}</td>
+                      <td><button onClick={()=>askDelete('wppay',w.id,`Payment of ${fmtL(w.net_payable)}`,()=>deleteWPPayment(w.id))} style={{background:'#fef0f0',border:'1px solid #e8d0d0',color:'#b85a5a',borderRadius:3,padding:'3px 7px',cursor:'pointer',fontSize:9,fontFamily:"'DM Mono',monospace"}}>🗑</button></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>;
+            })}
+          </div>;
+        })()}
 
         {/* ════ VENDORS ════ */}
         {view==='vendors'&&(<div>
@@ -2555,6 +2923,25 @@ export default function DashboardPage() {
                   {GST_RATES.map(r=><option key={r} value={r}>{r}%</option>)}
                 </select>
                 <div style={{fontSize:10,color:'#7a6e64',marginTop:3}}>Active: {settings.gst_rate_sales||12}% — used in GST Summary for output tax calculation</div>
+              </div>
+              <div style={{borderTop:'1px solid #e0d8cc',paddingTop:16,marginBottom:16}}>
+                <div style={{fontSize:11,color:'#6a5a9a',fontFamily:"'DM Mono',monospace",marginBottom:12}}>WATTPOWER PURCHASE RATES</div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:4}}>
+                  <div>
+                    <label style={lbl}>GST on Purchases (%)</label>
+                    <select style={{...inp}} value={settingsForm.purchase_gst_rate||5} onChange={e=>setSettingsForm({...settingsForm,purchase_gst_rate:e.target.value})}>
+                      {[0,5,12,18,28].map(r=><option key={r} value={r}>{r}%</option>)}
+                    </select>
+                    <div style={{fontSize:10,color:'#7a6e64',marginTop:3}}>Active: {settings.purchase_gst_rate||5}% — applied on WattPower payments</div>
+                  </div>
+                  <div>
+                    <label style={lbl}>TDS Rate on Payments (%)</label>
+                    <input style={inp} type="number" step="0.01" min="0" max="10"
+                      value={settingsForm.tds_rate??0.1}
+                      onChange={e=>setSettingsForm({...settingsForm,tds_rate:e.target.value})}/>
+                    <div style={{fontSize:10,color:'#7a6e64',marginTop:3}}>Active: {settings.tds_rate??0.1}% — deducted from gross amount (excl. GST)</div>
+                  </div>
+                </div>
               </div>
               <button onClick={saveSettings} disabled={saving} style={btn(saving)}>{saving?'Saving…':'SAVE →'}</button>
             </div>
