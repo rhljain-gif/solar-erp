@@ -2396,10 +2396,10 @@ export default function DashboardPage() {
 
             {/* KPI cards */}
             <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:14,marginBottom:20}}>
-              <KPICard label="Total Paid (Net)" val={fmtL(totalPaid)} color="#2d8a5e"/>
-              <KPICard label="Total Gross" val={fmtL(totalGross)} color="#b8924a"/>
-              <KPICard label="Total GST Paid" val={fmtL(totalGST)} color="#6a5a9a"/>
-              <KPICard label="Total TDS Deducted" val={fmtL(totalTDS)} color="#c87030"/>
+              <KPICard label="Total Paid (Net)" val={fmtX(totalPaid)} color="#2d8a5e"/>
+              <KPICard label="Total Gross" val={fmtX(totalGross)} color="#b8924a"/>
+              <KPICard label="Total GST Paid" val={fmtX(totalGST)} color="#6a5a9a"/>
+              <KPICard label="Total TDS Deducted" val={fmtX(totalTDS)} color="#c87030"/>
               <KPICard label="Units Paid For" val={fmt(totalUnitsPaid)} color="#2d7fa8"/>
             </div>
 
@@ -2467,7 +2467,7 @@ export default function DashboardPage() {
                       ['Gross Amount',qty?fmtX(gross):'—','#2c2520'],
                       [`GST @ ${gstRate}%`,qty?fmtX(gstAmt):'—','#6a5a9a'],
                       [`TDS @ ${tdsRate}%`,qty?`− ${fmtX(tdsAmt)}`:'—','#c87030'],
-                      ['NET PAYABLE',qty?fmtL(net):'—','#2d8a5e'],
+                      ['NET PAYABLE',qty?fmtX(net):'—','#2d8a5e'],
                     ].map(([label,val,color],i)=>(
                       <div key={label} style={{padding:'10px 14px',borderRight:i<5?'1px solid #e0d8cc':'none',background:i===5?'#e8f4ec':'transparent'}}>
                         <div style={{fontSize:9,color:'#a09689',fontFamily:"'DM Mono',monospace",marginBottom:4}}>{label}</div>
