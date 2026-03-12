@@ -1215,21 +1215,24 @@ export default function DashboardPage() {
     const d30=mkDate(30)(), d60=mkDate(60)(), d90=mkDate(90)();
 
     const monthly=fyMonths.map(m=>{
+      // Cash In: advances on PO record + payment_receipts + manual Cash In txns
       const advancesIn=pos.filter(p=>p.po_date>=m.start&&p.po_date<=m.end).reduce((s,p)=>s+Number(p.advance),0);
+      const receiptsIn=receipts.filter(r=>r.receipt_date>=m.start&&r.receipt_date<=m.end).reduce((s,r)=>s+Number(r.amount),0);
       const txnIn=cashTxns.filter(t=>t.txn_date>=m.start&&t.txn_date<=m.end&&t.txn_type==='Cash In').reduce((s,t)=>s+Number(t.amount),0);
+      // Cash Out: mfr payments (use purchase_date; fall back to po_date if blank) + expenses + manual txns
+      const mfrPay=pos.filter(p=>{ const d=p.purchase_date||p.po_date; return d>=m.start&&d<=m.end; }).reduce((s,p)=>s+p.qty*Number(p.purchase_price),0);
       const txnOut=cashTxns.filter(t=>t.txn_date>=m.start&&t.txn_date<=m.end&&t.txn_type==='Cash Out').reduce((s,t)=>s+Number(t.amount),0);
-      const mfrPay=pos.filter(p=>p.purchase_date>=m.start&&p.purchase_date<=m.end).reduce((s,p)=>s+p.qty*Number(p.purchase_price),0);
       const mfrExp2=mfrExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.total_amount),0);
       const bizExpOut=bizExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.total_amount),0);
-      const totalIn=advancesIn+txnIn, totalOut=mfrPay+txnOut+mfrExp2+bizExpOut;
-      return {label:m.label,cashIn:totalIn,cashOut:totalOut,net:totalIn-totalOut,advancesIn,txnIn,mfrPay,mfrExp2,bizExpOut,txnOut};
+      const totalIn=advancesIn+receiptsIn+txnIn, totalOut=mfrPay+txnOut+mfrExp2+bizExpOut;
+      return {label:m.label,cashIn:totalIn,cashOut:totalOut,net:totalIn-totalOut,advancesIn,receiptsIn,txnIn,mfrPay,mfrExp2,bizExpOut,txnOut};
     });
 
     const totalIn=monthly.reduce((s,m)=>s+m.cashIn,0);
     const totalOut=monthly.reduce((s,m)=>s+m.cashOut,0);
     const f=(d)=>pipeline.filter(p=>p.status==='Active'&&new Date(p.expected_date)<=d).reduce((s,p)=>s+(p.expected_value||p.expected_qty*(p.delivery_type==='DDP'?settings.default_purchase_price_ddp:settings.default_purchase_price_exw))*p.probability/100,0);
     return {monthly,totalIn,totalOut,netCF:totalIn-totalOut,expectedInflows:analytics.pendingAdvance,forecast30:f(d30),forecast60:f(d60),forecast90:f(d90),fy};
-  },[pos,cashTxns,mfrExp,bizExp,pipeline,targets,selectedFY,settings,analytics]);
+  },[pos,cashTxns,mfrExp,bizExp,pipeline,targets,selectedFY,settings,analytics,receipts]);
 
   // ── GST analytics (rate from Settings) ───────────────────────────────────
   const gstAnalytics = useMemo(()=>{
@@ -1663,7 +1666,7 @@ export default function DashboardPage() {
             </div>
             <div style={{...card,overflow:'auto',marginBottom:18}}>
               <table>
-                <thead><tr>{['Month','Cash In','Cash Out','Net','Advances','Mfr Payments','Mfr Expenses','Biz Expenses','Other Out'].map(h=><th key={h}>{h}</th>)}</tr></thead>
+                <thead><tr>{['Month','Cash In','Cash Out','Net','Advances','Receipts','Mfr Payments','Mfr Expenses','Biz Expenses','Other Out'].map(h=><th key={h}>{h}</th>)}</tr></thead>
                 <tbody>{cashAnalytics.monthly.map(m=>(
                   <tr key={m.label}>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a'}}>{m.label}</td>
@@ -1671,6 +1674,7 @@ export default function DashboardPage() {
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{m.cashOut>0?fmtL(m.cashOut):'—'}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:m.net>=0?'#2d8a5e':'#b85a5a',fontWeight:600}}>{m.cashIn>0||m.cashOut>0?fmtL(m.net):'—'}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.advancesIn>0?fmtL(m.advancesIn):'—'}</td>
+                    <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.receiptsIn>0?fmtL(m.receiptsIn):'—'}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.mfrPay>0?fmtL(m.mfrPay):'—'}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.mfrExp2>0?fmtL(m.mfrExp2):'—'}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#c87030'}}>{m.bizExpOut>0?fmtL(m.bizExpOut):'—'}</td>
