@@ -1722,7 +1722,7 @@ export default function DashboardPage() {
                 </table>
               </div>
             )}
-          </>):<div style={{color:'#7a6e64',fontSize:13}}>Configure a financial year in Settings first.</div>}
+          </>)}
         </div>)}
 
         {/* ════ TARGET vs ACTUAL ════ */}
@@ -1842,7 +1842,7 @@ export default function DashboardPage() {
                 ))}</tbody>
               </table>
             </div>
-          </>):<div style={{color:'#7a6e64',fontSize:13}}>Configure a financial year in Settings first.</div>}
+          </>)}
         </div>)}
 
         {/* ════ PIPELINE ════ */}
