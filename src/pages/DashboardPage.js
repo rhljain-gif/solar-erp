@@ -1208,8 +1208,12 @@ export default function DashboardPage() {
   // ── Cash Flow ─────────────────────────────────────────────────────────────
   const cashAnalytics = useMemo(()=>{
     const fy=targets.find(t=>t.fy_label===selectedFY)||targets[0];
-    if (!fy) return null;
-    const fyMonths=FY_MONTHS(fy.fy_label);
+    // If no target configured, derive FY bounds from today's date (Indian FY: Apr-Mar)
+    const today2=new Date();
+    const fyYear = today2.getMonth()>=3 ? today2.getFullYear() : today2.getFullYear()-1;
+    const fallbackFY = { fy_label:`FY ${fyYear}-${String(fyYear+1).slice(2)}`, fy_start:`${fyYear}-04-01`, fy_end:`${fyYear+1}-03-31` };
+    const activeFY = fy || fallbackFY;
+    const fyMonths=FY_MONTHS(activeFY.fy_label);
     const today=new Date();
     const mkDate=d=>d30=>{ const x=new Date(today); x.setDate(x.getDate()+d30); return x; };
     const d30=mkDate(30)(), d60=mkDate(60)(), d90=mkDate(90)();
@@ -1231,15 +1235,18 @@ export default function DashboardPage() {
     const totalIn=monthly.reduce((s,m)=>s+m.cashIn,0);
     const totalOut=monthly.reduce((s,m)=>s+m.cashOut,0);
     const f=(d)=>pipeline.filter(p=>p.status==='Active'&&new Date(p.expected_date)<=d).reduce((s,p)=>s+(p.expected_value||p.expected_qty*(p.delivery_type==='DDP'?settings.default_purchase_price_ddp:settings.default_purchase_price_exw))*p.probability/100,0);
-    return {monthly,totalIn,totalOut,netCF:totalIn-totalOut,expectedInflows:analytics.pendingAdvance,forecast30:f(d30),forecast60:f(d60),forecast90:f(d90),fy};
+    return {monthly,totalIn,totalOut,netCF:totalIn-totalOut,expectedInflows:analytics.pendingAdvance,forecast30:f(d30),forecast60:f(d60),forecast90:f(d90),fy:activeFY};
   },[pos,cashTxns,mfrExp,bizExp,pipeline,targets,selectedFY,settings,analytics,receipts]);
 
   // ── GST analytics (rate from Settings) ───────────────────────────────────
   const gstAnalytics = useMemo(()=>{
     const fy=targets.find(t=>t.fy_label===selectedFY)||targets[0];
-    if (!fy) return null;
+    const today3=new Date();
+    const fyYear2 = today3.getMonth()>=3 ? today3.getFullYear() : today3.getFullYear()-1;
+    const fallbackFY2 = { fy_label:`FY ${fyYear2}-${String(fyYear2+1).slice(2)}` };
+    const activeFY2 = fy || fallbackFY2;
     const rate=(settings.gst_rate_sales||12)/100;
-    const fyMonths=FY_MONTHS(fy.fy_label);
+    const fyMonths=FY_MONTHS(activeFY2.fy_label);
 
     const monthly=fyMonths.map(m=>{
       // P2.6 + B1: output GST from actual po_invoices rows bucketed by invoice_date
@@ -1256,7 +1263,7 @@ export default function DashboardPage() {
 
     const tOut=monthly.reduce((s,m)=>s+m.outputGST,0);
     const tIn=monthly.reduce((s,m)=>s+m.totalInput,0);
-    return {monthly,tOut,tIn,tNet:tOut-tIn,ratePct:(rate*100).toFixed(0)+'%'};
+    return {monthly,tOut,tIn,tNet:tOut-tIn,ratePct:(rate*100).toFixed(0)+'%',fy:activeFY2};
   },[pos,mfrExp,bizExp,targets,selectedFY,settings]);
 
   // ── Aging ────────────────────────────────────────────────────────────────
@@ -1646,7 +1653,7 @@ export default function DashboardPage() {
         {view==='cashflow'&&(<div>
           <div className="sec">Cash Flow Dashboard</div>
           <FYSelector/>
-          {cashAnalytics?(<>
+          {cashAnalytics&&(<>
             <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
               <KPICard label="Total Cash In (FY)" val={fmtL(cashAnalytics.totalIn)} color="#2d8a5e"/>
               <KPICard label="Total Cash Out (FY)" val={fmtL(cashAnalytics.totalOut)} color="#b85a5a"/>
