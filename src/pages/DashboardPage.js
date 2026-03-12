@@ -1218,19 +1218,30 @@ export default function DashboardPage() {
     const mkDate=d=>d30=>{ const x=new Date(today); x.setDate(x.getDate()+d30); return x; };
     const d30=mkDate(30)(), d60=mkDate(60)(), d90=mkDate(90)();
 
+    // Build month buckets from activeFY — but also include any months outside FY that have data
+    const allDates=[
+      ...pos.map(p=>p.po_date||''),
+      ...receipts.map(r=>r.receipt_date||''),
+      ...cashTxns.map(t=>t.txn_date||''),
+      ...bizExp.map(e=>e.expense_date||''),
+    ].filter(Boolean).sort();
+    // Use FY months as the primary buckets
     const monthly=fyMonths.map(m=>{
-      // Cash In: advances on PO record + payment_receipts + manual Cash In txns
-      const advancesIn=pos.filter(p=>p.po_date>=m.start&&p.po_date<=m.end).reduce((s,p)=>s+Number(p.advance),0);
-      const receiptsIn=receipts.filter(r=>r.receipt_date>=m.start&&r.receipt_date<=m.end).reduce((s,r)=>s+Number(r.amount),0);
-      const txnIn=cashTxns.filter(t=>t.txn_date>=m.start&&t.txn_date<=m.end&&t.txn_type==='Cash In').reduce((s,t)=>s+Number(t.amount),0);
-      // Cash Out: mfr payments (use purchase_date; fall back to po_date if blank) + expenses + manual txns
-      const mfrPay=pos.filter(p=>{ const d=p.purchase_date||p.po_date; return d>=m.start&&d<=m.end; }).reduce((s,p)=>s+p.qty*Number(p.purchase_price),0);
-      const txnOut=cashTxns.filter(t=>t.txn_date>=m.start&&t.txn_date<=m.end&&t.txn_type==='Cash Out').reduce((s,t)=>s+Number(t.amount),0);
-      const mfrExp2=mfrExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.total_amount),0);
-      const bizExpOut=bizExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.total_amount),0);
+      const advancesIn=pos.filter(p=>p.po_date>=m.start&&p.po_date<=m.end).reduce((s,p)=>s+Number(p.advance||0),0);
+      const receiptsIn=receipts.filter(r=>r.receipt_date>=m.start&&r.receipt_date<=m.end).reduce((s,r)=>s+Number(r.amount||0),0);
+      const txnIn=cashTxns.filter(t=>t.txn_date>=m.start&&t.txn_date<=m.end&&t.txn_type==='Cash In').reduce((s,t)=>s+Number(t.amount||0),0);
+      const mfrPay=pos.filter(p=>{ const d=p.purchase_date||p.po_date; return d&&d>=m.start&&d<=m.end; }).reduce((s,p)=>s+Number(p.qty)*Number(p.purchase_price||0),0);
+      const txnOut=cashTxns.filter(t=>t.txn_date>=m.start&&t.txn_date<=m.end&&t.txn_type==='Cash Out').reduce((s,t)=>s+Number(t.amount||0),0);
+      const mfrExp2=mfrExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.total_amount||0),0);
+      const bizExpOut=bizExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.total_amount||0),0);
       const totalIn=advancesIn+receiptsIn+txnIn, totalOut=mfrPay+txnOut+mfrExp2+bizExpOut;
       return {label:m.label,cashIn:totalIn,cashOut:totalOut,net:totalIn-totalOut,advancesIn,receiptsIn,txnIn,mfrPay,mfrExp2,bizExpOut,txnOut};
     });
+    // Debug: log first date and last date in data vs FY range
+    console.log('[CashFlow] FY:',activeFY.fy_label,'start:',activeFY.fy_start,'end:',activeFY.fy_end);
+    console.log('[CashFlow] PO count:',pos.length,'Receipt count:',receipts.length);
+    console.log('[CashFlow] First PO date:',pos[0]?.po_date,'Last PO date:',pos[pos.length-1]?.po_date);
+    console.log('[CashFlow] Monthly totals:',monthly.map(m=>m.label+':'+m.cashIn));
 
     const totalIn=monthly.reduce((s,m)=>s+m.cashIn,0);
     const totalOut=monthly.reduce((s,m)=>s+m.cashOut,0);
@@ -2961,6 +2972,15 @@ export default function DashboardPage() {
             <div style={{...card,padding:22}}>
               <div style={{fontSize:11,color:'#2d7fa8',fontFamily:"'DM Mono',monospace",marginBottom:14}}>ANNUAL TARGETS</div>
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:12}}>
+                <div style={{gridColumn:'span 4',display:'flex',gap:8,marginBottom:4}}>
+                  <div style={{fontSize:10,color:'#8a7e72',fontFamily:"'DM Mono',monospace",alignSelf:'center'}}>QUICK FILL:</div>
+                  {[['FY 2023-24','2023-04-01','2023-03-31'],['FY 2024-25','2024-04-01','2025-03-31'],['FY 2025-26','2025-04-01','2026-03-31'],['FY 2026-27','2026-04-01','2027-03-31']].map(([label,start,end])=>(
+                    <button key={label} onClick={()=>setTargetForm(f=>({...f,fy_label:label,fy_start:start,fy_end:end}))}
+                      style={{background:targetForm.fy_label===label?'#fdf6ec':'#f5f0e8',border:`1px solid ${targetForm.fy_label===label?'#b8924a':'#d4cdc2'}`,color:targetForm.fy_label===label?'#b8924a':'#8a7e72',borderRadius:4,padding:'4px 10px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:10}}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <div><label style={lbl}>FY Label *</label><input style={inp} type="text" placeholder="FY 2025-26" value={targetForm.fy_label} onChange={e=>setTargetForm({...targetForm,fy_label:e.target.value})}/></div>
                 <div><label style={lbl}>FY Start *</label><input style={inp} type="date" value={targetForm.fy_start} onChange={e=>setTargetForm({...targetForm,fy_start:e.target.value})}/></div>
                 <div><label style={lbl}>FY End *</label><input style={inp} type="date" value={targetForm.fy_end} onChange={e=>setTargetForm({...targetForm,fy_end:e.target.value})}/></div>
