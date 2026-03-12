@@ -1348,6 +1348,7 @@ export default function DashboardPage() {
     {key:'ledger',     label:'📒 Ledger'},
     {key:'customers',  label:'👤 Customers'},
     {key:'vendors',    label:'🏪 Vendors'},
+    {key:'wppayments', label:'🏦 WP Payments'},
     {key:'simulator',  label:'🔮 Simulator'},
     {key:'mfrcn',      label:'🏭 Mfr. CNs'},
     {key:'settings',   label:'⚙️ Settings'},
