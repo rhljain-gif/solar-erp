@@ -1250,7 +1250,6 @@ export default function DashboardPage() {
       // Avg PP = total purchase cost ÷ (invoiced units + FOC units)
       const avgPP=(deliveredQty+focUnits)>0?actualCost/(deliveredQty+focUnits):0;
       const margin=actualNetRev>0?actualProfit/actualNetRev*100:0;
-      const margin=netSales>0?(profit/netSales)*100:0;
       const advance=cPOs.reduce((s,p)=>s+Number(p.advance),0);
       // Pending balance based on delivered qty
       const pending=cPOs.filter(p=>p.status!=='Delivered / Fulfilled').reduce((s,p)=>{
