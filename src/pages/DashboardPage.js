@@ -1186,42 +1186,70 @@ export default function DashboardPage() {
 
 
   const analytics = useMemo(()=>{
-    const totalSalesGross  = pos.reduce((s,p)=>s+p.qty*p.unit_price,0);
-    const totalUnits       = pos.reduce((s,p)=>s+p.qty,0);
-    const totalAdvances    = pos.reduce((s,p)=>s+Number(p.advance),0);
-    const totalCNValue     = cns.filter(c=>c.type==='CNNote').reduce((s,c)=>s+Number(c.amount),0);
-    const totalFOCCost     = cns.filter(c=>c.type==='FOC').reduce((s,c)=>{ const po=pos.find(p=>p.id===c.po_id); return s+c.foc_units*Number(po?.purchase_price||0); },0);
-    const totalNetSales    = totalSalesGross-totalCNValue;
-    const totalPurchCost   = pos.reduce((s,p)=>s+p.qty*Number(p.purchase_price),0)+totalFOCCost;
-    const totalBizExp      = bizExp.reduce((s,e)=>s+Number(e.total_amount),0);
-    const totalProfit      = totalNetSales-totalPurchCost-totalBizExp;
+    // ── Ordered basis (all POs, regardless of delivery) ──
+    const totalOrderedUnits  = pos.reduce((s,p)=>s+p.qty,0);
+    const totalSalesGross    = pos.reduce((s,p)=>s+p.qty*p.unit_price,0);
+    const totalCNValue       = cns.filter(c=>c.type==='CNNote').reduce((s,c)=>s+Number(c.amount),0);
+    const totalFOCCost       = cns.filter(c=>c.type==='FOC').reduce((s,c)=>{ const po=pos.find(p=>p.id===c.po_id); return s+c.foc_units*Number(po?.purchase_price||0); },0);
+    const totalNetSales      = totalSalesGross-totalCNValue;
+    const totalOrderedCost   = pos.reduce((s,p)=>s+p.qty*Number(p.purchase_price),0)+totalFOCCost;
+    const totalExpectedProfit= totalNetSales-totalOrderedCost; // no biz exp deducted
+
+    // ── Delivered basis (actual shipped units only) ──
+    const totalDeliveredUnits= pos.reduce((s,p)=>s+deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0),0);
+    const totalPendingUnits  = totalOrderedUnits-totalDeliveredUnits;
+    const totalActualRevenue = pos.reduce((s,p)=>{ const dQty=deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0); return s+dQty*Number(p.unit_price); },0);
+    // Prorate CNs to delivered qty ratio per customer
+    const totalActualCNShare = totalOrderedUnits>0?(totalCNValue*(totalDeliveredUnits/totalOrderedUnits)):0;
+    const totalActualNetRev  = totalActualRevenue-totalActualCNShare;
+    const totalActualCost    = pos.reduce((s,p)=>{ const dQty=deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0); return s+dQty*Number(p.purchase_price); },0);
+    const totalBizExp        = bizExp.reduce((s,e)=>s+Number(e.total_amount),0);
+    const totalActualProfit  = totalActualNetRev-totalActualCost-totalBizExp;  // biz exp only on actual
+
+    // Legacy aliases for compatibility
+    const totalUnits         = totalOrderedUnits;
+    const totalPurchCost     = totalOrderedCost;
+    const totalProfit        = totalActualProfit;
+    const totalAdvances      = pos.reduce((s,p)=>s+Number(p.advance),0);
+
     // pendingAdvance: if invoices exist use invoicedAmt-advance, else use orderedTotal-advance
-    // This ensures POs with no invoices yet still show their full outstanding balance
     const pendingAdvance   = pos.filter(p=>p.status!=='Delivered / Fulfilled').reduce((s,p)=>{
       const fin=poFinancials(p);
       const due = fin.invRows.length>0 ? fin.balanceDue : Math.max(0, fin.orderedTotal - fin.advance);
       return s+due;
     },0);
-    const avgSP            = totalUnits>0?totalNetSales/totalUnits:0;
+    const avgSP            = totalDeliveredUnits>0?totalActualNetRev/totalDeliveredUnits:0;
     const unfulfilled      = pos.filter(p=>p.status!=='Delivered / Fulfilled');
 
     const perCustomer = customers.map(cust=>{
       const cPOs=pos.filter(p=>p.customer_id===cust.id);
-      // Pool ALL CNs for this customer by customer_id — regardless of which PO they are linked to
       const cCNs=cns.filter(c=>c.customer_id===cust.id);
+
+      // Ordered basis
       const grossSales=cPOs.reduce((s,p)=>s+p.qty*p.unit_price,0);
       const totalQty=cPOs.reduce((s,p)=>s+p.qty,0);
-      // CN value: sum all credit notes at customer level
       const cnVal=cCNs.filter(c=>c.type==='CNNote').reduce((s,c)=>s+Number(c.amount),0);
-      // FOC: units and cost — use linked PO purchase price for cost
       const focUnits=cCNs.filter(c=>c.type==='FOC').reduce((s,c)=>s+c.foc_units,0);
       const focCost=cCNs.filter(c=>c.type==='FOC').reduce((s,c)=>{ const po=pos.find(p=>p.id===c.po_id); return s+c.foc_units*Number(po?.purchase_price||0); },0);
-      const netSales=grossSales-cnVal, purchCost=cPOs.reduce((s,p)=>s+p.qty*Number(p.purchase_price),0)+focCost;
-      const profit=netSales-purchCost;
-      // Avg SP = net sales ÷ invoiced units (CNs reduce numerator, not denominator)
-      const avgSP2=totalQty>0?netSales/totalQty:0;
+      const netSales=grossSales-cnVal;
+      const purchCost=cPOs.reduce((s,p)=>s+p.qty*Number(p.purchase_price),0)+focCost;
+      const expectedProfit=netSales-purchCost;
+
+      // Delivered basis
+      const deliveredQty=cPOs.reduce((s,p)=>s+deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0),0);
+      const pendingQty=totalQty-deliveredQty;
+      const actualRevenue=cPOs.reduce((s,p)=>{ const dQty=deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0); return s+dQty*Number(p.unit_price); },0);
+      const actualCNShare=totalQty>0?(cnVal*(deliveredQty/totalQty)):0;
+      const actualNetRev=actualRevenue-actualCNShare;
+      const actualCost=cPOs.reduce((s,p)=>{ const dQty=deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0); return s+dQty*Number(p.purchase_price); },0);
+      const actualProfit=actualNetRev-actualCost; // biz exp not allocated per customer
+      const profit=actualProfit; // alias for alert logic
+
+      // Avg SP = net sales ÷ delivered units
+      const avgSP2=deliveredQty>0?actualNetRev/deliveredQty:0;
       // Avg PP = total purchase cost ÷ (invoiced units + FOC units)
-      const avgPP=(totalQty+focUnits)>0?purchCost/(totalQty+focUnits):0;
+      const avgPP=(deliveredQty+focUnits)>0?actualCost/(deliveredQty+focUnits):0;
+      const margin=actualNetRev>0?actualProfit/actualNetRev*100:0;
       const margin=netSales>0?(profit/netSales)*100:0;
       const advance=cPOs.reduce((s,p)=>s+Number(p.advance),0);
       // Pending balance based on delivered qty
@@ -1230,11 +1258,26 @@ export default function DashboardPage() {
         const due = fin.invRows.length>0 ? fin.balanceDue : Math.max(0, fin.orderedTotal - fin.advance);
         return s+due;
       },0);
-      const atRisk=totalQty>0&&avgSP2<avgPP; const isLoss=totalQty>0&&profit<0;
-      return {...cust,grossSales,totalQty,cnVal,focUnits,focCost,netSales,purchCost,profit,avgSP:avgSP2,avgPP,margin,advance,pending,atRisk,isLoss};
+      const atRisk=deliveredQty>0&&avgSP2<avgPP; const isLoss=deliveredQty>0&&actualProfit<0;
+      return {...cust,grossSales,totalQty,deliveredQty,pendingQty,cnVal,focUnits,focCost,
+        netSales,purchCost,expectedProfit,
+        actualRevenue,actualNetRev,actualCost,actualProfit,
+        profit:actualProfit,
+        avgSP:avgSP2,avgPP,margin,advance,pending,atRisk,isLoss};
     });
 
-    return {totalSalesGross,totalUnits,totalAdvances,totalCNValue,totalFOCCost,totalNetSales,totalPurchCost,totalBizExp,totalProfit,pendingAdvance,avgSP,perCustomer,unfulfilled};
+    return {
+      // Order summary
+      totalOrderedUnits,totalDeliveredUnits,totalPendingUnits,
+      totalPOs:pos.length,
+      // Ordered (expected) basis
+      totalSalesGross,totalNetSales,totalCNValue,totalFOCCost,totalOrderedCost,totalExpectedProfit,
+      // Delivered (actual) basis
+      totalActualRevenue,totalActualNetRev,totalActualCost,totalBizExp,totalActualProfit,
+      // Legacy aliases
+      totalUnits:totalOrderedUnits,totalPurchCost:totalOrderedCost,totalProfit:totalActualProfit,
+      totalAdvances,pendingAdvance,avgSP,perCustomer,unfulfilled
+    };
   },[customers,pos,cns,bizExp,poFinancials]);
 
   // ── Biz expense analytics ─────────────────────────────────────────────────
@@ -1512,15 +1555,30 @@ export default function DashboardPage() {
             <div style={{fontFamily:"'Noto Sans JP',sans-serif",fontSize:20,fontWeight:300,color:'#2c2520',letterSpacing:'.02em'}}>Executive Overview</div>
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'#a09689',marginTop:3}}>GSTIN: {COMPANY.gstin} · {COMPANY.address}</div>
           </div>
+          {/* Row 1 — Order Summary */}
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',letterSpacing:'.14em',marginBottom:8,marginTop:4}}>ORDER SUMMARY</div>
           <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:16}}>
-            <KPICard label="Gross Sales" val={fmtL(analytics.totalSalesGross)} sub={`${fmt(analytics.totalUnits)} units`} color="#b8924a"/>
-            <KPICard label="Net Sales" val={fmtL(analytics.totalNetSales)} sub={`After CNs: −${fmtL(analytics.totalCNValue)}`} color="#2d7fa8"/>
-            <KPICard label="Purchase Cost" val={fmtL(analytics.totalPurchCost)} sub={`FOC cost: ${fmtL(analytics.totalFOCCost)}`} color="#6a5a9a"/>
+            <KPICard label="Total POs" val={fmt(analytics.totalPOs)} sub="all time" color="#b8924a"/>
+            <KPICard label="Total Units Ordered" val={fmt(analytics.totalOrderedUnits)} sub="across all POs" color="#2d7fa8"/>
+            <KPICard label="Units Delivered" val={fmt(analytics.totalDeliveredUnits)} sub={`${pct(analytics.totalOrderedUnits>0?analytics.totalDeliveredUnits/analytics.totalOrderedUnits*100:0)} fulfilled`} color="#2d8a5e"/>
+            <KPICard label="Units Pending" val={fmt(analytics.totalPendingUnits)} sub={`${analytics.unfulfilled.length} open POs`} color={analytics.totalPendingUnits>0?'#c87030':'#2d8a5e'} onClick={()=>setDrillDown(d=>d?.type==='open'?null:{type:'open'})} active={drillDown?.type==='open'}/>
+          </div>
+          {/* Row 2 — Actual P&L (delivered units, biz exp deducted) */}
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#2d8a5e',letterSpacing:'.14em',marginBottom:8}}>ACTUAL P&L — BASED ON DELIVERED UNITS</div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:14,marginBottom:16}}>
+            <KPICard label="Actual Revenue" val={fmtL(analytics.totalActualRevenue)} sub={`${fmt(analytics.totalDeliveredUnits)} units shipped`} color="#2d7fa8"/>
+            <KPICard label="Actual Cost (Purchase)" val={fmtL(analytics.totalActualCost)} sub="delivered units × PP" color="#6a5a9a"/>
             <KPICard label="Business Expenses" val={fmtL(analytics.totalBizExp)} sub="Click to see breakdown" color="#c87030" onClick={()=>setDrillDown(d=>d?.type==='expenses'?null:{type:'expenses'})} active={drillDown?.type==='expenses'}/>
-            <KPICard label="Net Profit" val={fmtL(analytics.totalProfit)} sub={`Margin: ${pct((analytics.totalProfit/analytics.totalNetSales)*100)}`} color={analytics.totalProfit>=0?'#2d8a5e':'#b85a5a'}/>
-            <KPICard label="Advances Received" val={fmtL(analytics.totalAdvances)} sub="from customers" color="#2d8a5e"/>
+            <KPICard label="Actual Net Profit" val={fmtL(analytics.totalActualProfit)} sub={`Margin: ${pct(analytics.totalActualNetRev>0?analytics.totalActualProfit/analytics.totalActualNetRev*100:0)}`} color={analytics.totalActualProfit>=0?'#2d8a5e':'#b85a5a'}/>
             <KPICard label="Pending Collections" val={fmtL(analytics.pendingAdvance)} sub="Click to see by customer" color={analytics.pendingAdvance>0?'#b85a5a':'#2d8a5e'} onClick={()=>setDrillDown(d=>d?.type==='pending'?null:{type:'pending'})} active={drillDown?.type==='pending'}/>
-            <KPICard label="Open Orders" val={fmt(analytics.unfulfilled.length)} sub="Click to see details" color="#b8924a" onClick={()=>setDrillDown(d=>d?.type==='open'?null:{type:'open'})} active={drillDown?.type==='open'}/>
+          </div>
+          {/* Row 3 — Expected P&L (all POs complete, no biz exp) */}
+          <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#b8924a',letterSpacing:'.14em',marginBottom:8}}>EXPECTED P&L — IF ALL PENDING ORDERS DELIVERED (excl. Biz Exp)</div>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:16}}>
+            <KPICard label="Expected Revenue" val={fmtL(analytics.totalNetSales)} sub={`${fmt(analytics.totalOrderedUnits)} units total`} color="#2d7fa8"/>
+            <KPICard label="Expected Cost" val={fmtL(analytics.totalOrderedCost)} sub={`FOC cost: ${fmtL(analytics.totalFOCCost)}`} color="#6a5a9a"/>
+            <KPICard label="Expected Gross Profit" val={fmtL(analytics.totalExpectedProfit)} sub={`Margin: ${pct(analytics.totalNetSales>0?analytics.totalExpectedProfit/analytics.totalNetSales*100:0)}`} color={analytics.totalExpectedProfit>=0?'#2d8a5e':'#b85a5a'}/>
+            <KPICard label="Advances Received" val={fmtL(analytics.totalAdvances)} sub="from customers" color="#2d8a5e"/>
           </div>
           {/* Drill-down panel */}
           {drillDown&&(
@@ -1558,7 +1616,7 @@ export default function DashboardPage() {
                     <tr key={c.id} style={{cursor:'pointer'}} onClick={()=>{setLedgerCust(c.id);setView('ledger');setDrillDown(null);}}>
                       <td style={{fontWeight:500}}>{c.name}</td>
                       <td style={{fontFamily:"'DM Mono',monospace",textAlign:'center'}}>{pos.filter(p=>p.customer_id===c.id&&p.status!=='Delivered / Fulfilled').length}</td>
-                      <td style={{fontFamily:"'DM Mono',monospace",color:'#4a8fa8'}}>{fmtL(c.grossSales)}</td>
+                      <td style={{fontFamily:"'DM Mono',monospace",color:'#4a8fa8'}}>{fmtL(c.actualNetRev)}</td>
                       <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{fmtL(c.advance)}</td>
                       <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a',fontWeight:700}}>{fmtL(c.pending)}</td>
                     </tr>))}</tbody>
@@ -1577,21 +1635,21 @@ export default function DashboardPage() {
               )}
             </div>
           )}
-          <div className="sec">Customer Profitability</div>
+          <div className="sec">Customer Profitability — Actual vs Expected</div>
           <div style={{...card,overflow:'auto',marginBottom:16}}>
             <table>
-              <thead><tr>{['Customer','Units','Gross','CN','Net Sales','Purchase Cost','Biz Exp Share','Profit','Margin','Avg SP','Avg PP','Pending','Alert'].map(h=><th key={h}>{h}</th>)}</tr></thead>
-              <tbody>{analytics.perCustomer.map(c=>(
+              <thead><tr>{['Customer','Ordered','Delivered','Pending','Actual Revenue','Actual Cost','Actual Profit','Expected Revenue','Expected Profit','Avg SP','Avg PP','Outstanding','Alert'].map(h=><th key={h}>{h}</th>)}</tr></thead>
+              <tbody>{analytics.perCustomer.filter(c=>c.totalQty>0).map(c=>(
                 <tr key={c.id}>
                   <td style={{fontWeight:500}}>{c.name}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace"}}>{c.totalQty}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtL(c.grossSales)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{fmtL(c.cnVal)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#2d7fa8'}}>{fmtL(c.netSales)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtL(c.purchCost)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:'#c87030',fontSize:11}}>Pro-rated</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:c.profit>=0?'#2d8a5e':'#b85a5a',fontWeight:600}}>{fmtL(c.profit)}</td>
-                  <td style={{fontFamily:"'DM Mono',monospace",color:c.margin>=0?'#2d8a5e':'#b85a5a'}}>{pct(c.margin)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",textAlign:'center'}}>{fmt(c.totalQty)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",textAlign:'center',color:'#2d8a5e',fontWeight:600}}>{fmt(c.deliveredQty)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",textAlign:'center',color:c.pendingQty>0?'#c87030':'#2d8a5e'}}>{fmt(c.pendingQty)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#2d7fa8'}}>{fmtL(c.actualNetRev)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#6a5a9a'}}>{fmtL(c.actualCost)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:c.actualProfit>=0?'#2d8a5e':'#b85a5a',fontWeight:700}}>{fmtL(c.actualProfit)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:'#a09689'}}>{fmtL(c.netSales)}</td>
+                  <td style={{fontFamily:"'DM Mono',monospace",color:c.expectedProfit>=0?'#2d8a5e':'#b85a5a',fontWeight:600}}>{fmtL(c.expectedProfit)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtC(c.avgSP)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtC(c.avgPP)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:c.pending>0?'#b85a5a':'#2d8a5e'}}>{fmtL(c.pending)}</td>
@@ -1600,7 +1658,7 @@ export default function DashboardPage() {
               ))}</tbody>
             </table>
           </div>
-          {analytics.perCustomer.filter(c=>c.isLoss&&!c.atRisk).map(c=><AlertBox key={'loss-'+c.id} msg={`${c.name} — Loss-making: Profit ${fmtC(c.profit)} (Net Sales ${fmtC(c.netSales)} vs Cost ${fmtC(c.purchCost)})`}/>)}
+          {analytics.perCustomer.filter(c=>c.isLoss&&!c.atRisk).map(c=><AlertBox key={'loss-'+c.id} msg={`${c.name} — Loss-making: Actual Profit ${fmtC(c.actualProfit)} (Revenue ${fmtC(c.actualNetRev)} vs Cost ${fmtC(c.actualCost)})`}/>)}
           {analytics.perCustomer.filter(c=>c.atRisk).map(c=><AlertBox key={'risk-'+c.id} msg={`${c.name} — Avg SP (${fmtC(c.avgSP)}) below Avg PP (${fmtC(c.avgPP)})`}/>)}
         </div>)}
 
