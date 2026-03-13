@@ -475,8 +475,21 @@ export default function DashboardPage() {
   const saveEditCustomer = async () => {
     if (!editCustForm.name) { showToast('Customer name is required'); return; }
     setSaving(true);
-    const {error}=await supabase.from('customers').update(editCustForm).eq('id',editCustomer.id);
-    if (error) showToast('Error: '+(error.message.includes('unique')?`Code "${editCustForm.customer_code}" already in use`:error.message), 'error');
+    const editPayload = {
+      ...editCustForm,
+      customer_code: editCustForm.customer_code?.trim()||null,
+      gstin: editCustForm.gstin?.trim()||null,
+      phone: editCustForm.phone?.trim()||null,
+      email: editCustForm.email?.trim()||null,
+    };
+    const {error}=await supabase.from('customers').update(editPayload).eq('id',editCustomer.id);
+    if (error) {
+      if (error.message.includes('unique')||error.message.includes('duplicate')) {
+        showToast(`Customer code "${editCustForm.customer_code}" is already used by another customer.`,'error');
+      } else {
+        showToast('Error: '+error.message,'error');
+      }
+    }
     else { showToast('Customer updated ✓'); setEditCustomer(null); await fetchAll(); }
     setSaving(false);
   };
@@ -648,10 +661,28 @@ export default function DashboardPage() {
 
 
   const addCustomer = async () => {
-    if (!custForm.name) return; setSaving(true);
-    const {error}=await supabase.from('customers').insert([custForm]);
-    if (error) showToast('Error: '+(error.message.includes('duplicate')||error.message.includes('unique')?`Customer code "${custForm.customer_code}" already exists`:error.message));
-    else { showToast('Customer added ✓'); setCustForm({customer_code:'',name:'',gstin:'',contact_name:'',phone:'',email:'',address:''}); await fetchAll(); }
+    if (!custForm.name) { showToast('Customer name is required','error'); return; }
+    setSaving(true);
+    // Convert empty strings to null so unique constraint only applies to non-blank codes
+    const payload = {
+      ...custForm,
+      customer_code: custForm.customer_code.trim()||null,
+      gstin: custForm.gstin.trim()||null,
+      phone: custForm.phone.trim()||null,
+      email: custForm.email.trim()||null,
+    };
+    const {error}=await supabase.from('customers').insert([payload]);
+    if (error) {
+      if (error.message.includes('duplicate')||error.message.includes('unique')) {
+        showToast(`Customer code "${custForm.customer_code}" is already used by another customer. Please use a different code or leave it blank.`,'error');
+      } else {
+        showToast('Error: '+error.message,'error');
+      }
+    } else {
+      showToast('Customer added ✓');
+      setCustForm({customer_code:'',name:'',gstin:'',contact_name:'',phone:'',email:'',address:''});
+      await fetchAll();
+    }
     setSaving(false);
   };
 
