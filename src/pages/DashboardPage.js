@@ -1230,7 +1230,8 @@ export default function DashboardPage() {
         const due = fin.invRows.length>0 ? fin.balanceDue : Math.max(0, fin.orderedTotal - fin.advance);
         return s+due;
       },0);
-      return {...cust,grossSales,totalQty,cnVal,focUnits,focCost,netSales,purchCost,profit,avgSP:avgSP2,avgPP,margin,advance,pending,atRisk:totalQty>0&&avgSP2<avgPP};
+      const atRisk=totalQty>0&&avgSP2<avgPP; const isLoss=totalQty>0&&profit<0;
+      return {...cust,grossSales,totalQty,cnVal,focUnits,focCost,netSales,purchCost,profit,avgSP:avgSP2,avgPP,margin,advance,pending,atRisk,isLoss};
     });
 
     return {totalSalesGross,totalUnits,totalAdvances,totalCNValue,totalFOCCost,totalNetSales,totalPurchCost,totalBizExp,totalProfit,pendingAdvance,avgSP,perCustomer,unfulfilled};
@@ -1594,12 +1595,13 @@ export default function DashboardPage() {
                   <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtC(c.avgSP)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace"}}>{fmtC(c.avgPP)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:c.pending>0?'#b85a5a':'#2d8a5e'}}>{fmtL(c.pending)}</td>
-                  <td>{c.atRisk?<span className="chip" style={{background:'#450a0a',color:'#b85a5a',borderColor:'#f0d8d8'}}>⚠ RISK</span>:<span className="chip" style={{background:'#d1ead8',color:'#2d8a5e',borderColor:'#5a9e6f'}}>✓ OK</span>}</td>
+                  <td>{c.atRisk?<span className="chip" style={{background:'#450a0a',color:'#b85a5a',borderColor:'#f0d8d8'}}>⚠ SP RISK</span>:c.isLoss?<span className="chip" style={{background:'#2d0a0a',color:'#e05a5a',borderColor:'#c04040'}}>🔴 LOSS</span>:<span className="chip" style={{background:'#d1ead8',color:'#2d8a5e',borderColor:'#5a9e6f'}}>✓ OK</span>}</td>
                 </tr>
               ))}</tbody>
             </table>
           </div>
-          {analytics.perCustomer.filter(c=>c.atRisk).map(c=><AlertBox key={c.id} msg={`${c.name} — Avg SP (${fmtC(c.avgSP)}) below Avg PP (${fmtC(c.avgPP)})`}/>)}
+          {analytics.perCustomer.filter(c=>c.isLoss&&!c.atRisk).map(c=><AlertBox key={'loss-'+c.id} msg={`${c.name} — Loss-making: Profit ${fmtC(c.profit)} (Net Sales ${fmtC(c.netSales)} vs Cost ${fmtC(c.purchCost)})`}/>)}
+          {analytics.perCustomer.filter(c=>c.atRisk).map(c=><AlertBox key={'risk-'+c.id} msg={`${c.name} — Avg SP (${fmtC(c.avgSP)}) below Avg PP (${fmtC(c.avgPP)})`}/>)}
         </div>)}
 
         {/* ════ EXPENSES ════ */}
@@ -2285,7 +2287,7 @@ export default function DashboardPage() {
                   <td style={{fontFamily:"'DM Mono',monospace",color:(a?.profit||0)>=0?'#2d8a5e':'#b85a5a'}}>{fmtL(a?.profit||0)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace"}}>{pct(a?.margin||0)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:(a?.pending||0)>0?'#b85a5a':'#2d8a5e'}}>{fmtL(a?.pending||0)}</td>
-                  <td>{a?.atRisk?<span className="chip" style={{background:'#450a0a',color:'#b85a5a',borderColor:'#f0d8d8'}}>⚠ RISK</span>:<span className="chip" style={{background:'#d1ead8',color:'#2d8a5e',borderColor:'#5a9e6f'}}>✓ OK</span>}</td>
+                  <td>{a?.atRisk?<span className="chip" style={{background:'#450a0a',color:'#b85a5a',borderColor:'#f0d8d8'}}>⚠ SP RISK</span>:a?.isLoss?<span className="chip" style={{background:'#2d0a0a',color:'#e05a5a',borderColor:'#c04040'}}>🔴 LOSS</span>:<span className="chip" style={{background:'#d1ead8',color:'#2d8a5e',borderColor:'#5a9e6f'}}>✓ OK</span>}</td>
                   <td><button onClick={()=>openEditCustomer(c)} style={{background:'#fdf6ec',border:'1px solid #e0d8cc',color:'#b8924a',borderRadius:4,padding:'4px 10px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}>✏ Edit</button></td>
                 </tr>
               );})}</tbody>
