@@ -276,8 +276,15 @@ const POInvoicePanel = ({po, fin, poInvoices, invoiceForm, setInvoiceForm, onAdd
           </div>
           <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:10,alignItems:'flex-end'}}>
             <div><label style={lbl}>Invoice No *</label>
-              <input style={inp} type="text" placeholder="INV-0001" value={f.invoice_no}
-                onChange={e=>setInvoiceForm({...f,invoice_no:e.target.value})}/>
+              <div style={{display:'flex',gap:4}}>
+                <input style={{...inp,flex:1}} type="text" placeholder="INV-0001" value={f.invoice_no}
+                  onChange={e=>setInvoiceForm({...f,invoice_no:e.target.value})}/>
+                <button type="button" onClick={()=>{
+                  const allInvNos=poInvoices.map(i=>i.invoice_no).filter(Boolean);
+                  const maxNo=allInvNos.reduce((max,n)=>{ const m=n.match(/(\d+)$/); return m?Math.max(max,Number(m[1])):max; },0);
+                  setInvoiceForm({...f,invoice_no:`INV-${String(maxNo+1).padStart(4,'0')}`});
+                }} style={{background:'#f5f0e8',border:'1px solid #d4cdc2',color:'#b8924a',borderRadius:4,padding:'0 8px',cursor:'pointer',fontSize:9,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}>AUTO</button>
+              </div>
             </div>
             <div><label style={lbl}>Date *</label>
               <input style={inp} type="date" value={f.invoice_date}
@@ -411,6 +418,9 @@ export default function DashboardPage() {
   const [expCatFilter,setExpCatFilter]   = useState('All');
   const [searchPO,setSearchPO]           = useState('');
   const [searchCust,setSearchCust]       = useState('');
+  const [searchExp,setSearchExp]         = useState('');
+  const [searchDel,setSearchDel]         = useState('');
+  const [searchSite,setSearchSite]       = useState('');
   const [searchVendor,setSearchVendor]   = useState('');
   const [searchCN,setSearchCN]           = useState('');
   const [searchPipe,setSearchPipe]       = useState('');
@@ -596,6 +606,9 @@ export default function DashboardPage() {
       invoice_no:editForm.invoice_no||null, invoice_date:editForm.invoice_date||null,
       dispatch_date:editForm.dispatch_date||null,
       gst_rate:Number(editForm.gst_rate||12),
+      // Sync delivered_qty when manually marking as Delivered / Fulfilled
+      ...(editForm.status==='Delivered / Fulfilled'&&Number(editPO.delivered_qty||0)<Number(editForm.qty||0)
+        ? {delivered_qty:Number(editForm.qty)} : {}),
     }).eq('id',editPO.id);
     if (error) showToast('Error: '+error.message, 'error');
     else { showToast('PO updated ✓'); setEditPO(null); await fetchAll(); }
@@ -771,7 +784,19 @@ export default function DashboardPage() {
     setSaving(false);
   };
 
-  const updatePOStatus = async (id,s) => { await supabase.from('purchase_orders').update({status:s}).eq('id',id); await fetchAll(); };
+  const updatePOStatus = async (id,s) => {
+    const po=pos.find(p=>p.id===id);
+    const updates={status:s};
+    // When manually marking as Delivered / Fulfilled, sync delivered_qty to full qty
+    // so Overview delivered units and actual revenue stay accurate
+    if(s==='Delivered / Fulfilled'&&po&&Number(po.delivered_qty||0)<Number(po.qty||0)){
+      updates.delivered_qty=Number(po.qty);
+    }
+    // When moving back from Fulfilled to an earlier stage, do NOT reset delivered_qty
+    // as actual partial deliveries may have been logged
+    await supabase.from('purchase_orders').update(updates).eq('id',id);
+    await fetchAll();
+  };
   const updatePOField  = async (id,f,v) => { await supabase.from('purchase_orders').update({[f]:v||null}).eq('id',id); await fetchAll(); };
 
   const addCN = async () => {
@@ -1144,7 +1169,7 @@ export default function DashboardPage() {
   // invoicedAmt  = deliveredQty × unit_price − discount_prorated + GST
   // balanceDue   = invoicedAmt − advance (floor 0)
   const poFinancials = useCallback((p) => {
-    const deliveredQty = deliveries.filter(d=>d.po_id===p.id).reduce((s,d)=>s+d.qty_delivered, 0);
+    const deliveredQty = Number(p.delivered_qty||0); // use denormalised field — kept in sync by app
     const orderedQty   = p.qty || 0;
     const unitPrice    = Number(p.unit_price) || 0;
     const discountAmt  = Number(p.discount_amount) || 0;
@@ -1186,44 +1211,54 @@ export default function DashboardPage() {
 
 
   const analytics = useMemo(()=>{
-    // ── Ordered basis (all POs, regardless of delivery) ──
-    const totalOrderedUnits  = pos.reduce((s,p)=>s+p.qty,0);
-    const totalSalesGross    = pos.reduce((s,p)=>s+p.qty*p.unit_price,0);
-    const totalCNValue       = cns.filter(c=>c.type==='CNNote').reduce((s,c)=>s+Number(c.amount),0);
-    const totalFOCCost       = cns.filter(c=>c.type==='FOC').reduce((s,c)=>{ const po=pos.find(p=>p.id===c.po_id); return s+c.foc_units*Number(po?.purchase_price||0); },0);
+    // ── FY filter — use selectedFY if a target is configured, else all-time ──
+    const fyT=targets.find(t=>t.fy_label===selectedFY)||targets[0];
+    const today4=new Date();
+    const fyYear4=today4.getMonth()>=3?today4.getFullYear():today4.getFullYear()-1;
+    const fyStart=fyT?fyT.fy_start:`${fyYear4}-04-01`;
+    const fyEnd=fyT?fyT.fy_end:`${fyYear4+1}-03-31`;
+    const fyPos=pos.filter(p=>p.po_date>=fyStart&&p.po_date<=fyEnd);
+    const fyCns=cns.filter(c=>{ const po=pos.find(p=>p.id===c.po_id); return po&&po.po_date>=fyStart&&po.po_date<=fyEnd; });
+    const fyBizExp=bizExp.filter(e=>e.expense_date>=fyStart&&e.expense_date<=fyEnd);
+
+    // ── Ordered basis (all POs in FY, regardless of delivery) ──
+    const totalOrderedUnits  = fyPos.reduce((s,p)=>s+p.qty,0);
+    const totalSalesGross    = fyPos.reduce((s,p)=>s+p.qty*p.unit_price,0);
+    const totalCNValue       = fyCns.filter(c=>c.type==='CNNote').reduce((s,c)=>s+Number(c.amount),0);
+    const totalFOCCost       = fyCns.filter(c=>c.type==='FOC').reduce((s,c)=>{ const po=pos.find(p=>p.id===c.po_id); return s+c.foc_units*Number(po?.purchase_price||0); },0);
     const totalNetSales      = totalSalesGross-totalCNValue;
-    const totalOrderedCost   = pos.reduce((s,p)=>s+p.qty*Number(p.purchase_price),0)+totalFOCCost;
+    const totalOrderedCost   = fyPos.reduce((s,p)=>s+p.qty*Number(p.purchase_price),0)+totalFOCCost;
     const totalExpectedProfit= totalNetSales-totalOrderedCost; // no biz exp deducted
 
-    // ── Delivered basis (actual shipped units only) ──
-    const totalDeliveredUnits= pos.reduce((s,p)=>s+deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0),0);
+    // ── Delivered basis — use p.delivered_qty from PO record (maintained in sync by app) ──
+    const totalDeliveredUnits= fyPos.reduce((s,p)=>s+Number(p.delivered_qty||0),0);
     const totalPendingUnits  = totalOrderedUnits-totalDeliveredUnits;
-    const totalActualRevenue = pos.reduce((s,p)=>{ const dQty=deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0); return s+dQty*Number(p.unit_price); },0);
-    // Prorate CNs to delivered qty ratio per customer
+    const totalActualRevenue = fyPos.reduce((s,p)=>s+Number(p.delivered_qty||0)*Number(p.unit_price),0);
+    // Prorate CNs to delivered qty ratio
     const totalActualCNShare = totalOrderedUnits>0?(totalCNValue*(totalDeliveredUnits/totalOrderedUnits)):0;
     const totalActualNetRev  = totalActualRevenue-totalActualCNShare;
-    const totalActualCost    = pos.reduce((s,p)=>{ const dQty=deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0); return s+dQty*Number(p.purchase_price); },0);
-    const totalBizExp        = bizExp.reduce((s,e)=>s+Number(e.total_amount),0);
+    const totalActualCost    = fyPos.reduce((s,p)=>s+Number(p.delivered_qty||0)*Number(p.purchase_price),0);
+    const totalBizExp        = fyBizExp.reduce((s,e)=>s+Number(e.total_amount),0);
     const totalActualProfit  = totalActualNetRev-totalActualCost-totalBizExp;  // biz exp only on actual
 
     // Legacy aliases for compatibility
     const totalUnits         = totalOrderedUnits;
     const totalPurchCost     = totalOrderedCost;
     const totalProfit        = totalActualProfit;
-    const totalAdvances      = pos.reduce((s,p)=>s+Number(p.advance),0);
+    const totalAdvances      = fyPos.reduce((s,p)=>s+Number(p.advance),0);
 
     // pendingAdvance: if invoices exist use invoicedAmt-advance, else use orderedTotal-advance
-    const pendingAdvance   = pos.filter(p=>p.status!=='Delivered / Fulfilled').reduce((s,p)=>{
+    const pendingAdvance   = fyPos.filter(p=>p.status!=='Delivered / Fulfilled').reduce((s,p)=>{
       const fin=poFinancials(p);
       const due = fin.invRows.length>0 ? fin.balanceDue : Math.max(0, fin.orderedTotal - fin.advance);
       return s+due;
     },0);
     const avgSP            = totalDeliveredUnits>0?totalActualNetRev/totalDeliveredUnits:0;
-    const unfulfilled      = pos.filter(p=>p.status!=='Delivered / Fulfilled');
+    const unfulfilled      = fyPos.filter(p=>p.status!=='Delivered / Fulfilled');
 
     const perCustomer = customers.map(cust=>{
-      const cPOs=pos.filter(p=>p.customer_id===cust.id);
-      const cCNs=cns.filter(c=>c.customer_id===cust.id);
+      const cPOs=fyPos.filter(p=>p.customer_id===cust.id);
+      const cCNs=fyCns.filter(c=>c.customer_id===cust.id);
 
       // Ordered basis
       const grossSales=cPOs.reduce((s,p)=>s+p.qty*p.unit_price,0);
@@ -1235,13 +1270,13 @@ export default function DashboardPage() {
       const purchCost=cPOs.reduce((s,p)=>s+p.qty*Number(p.purchase_price),0)+focCost;
       const expectedProfit=netSales-purchCost;
 
-      // Delivered basis
-      const deliveredQty=cPOs.reduce((s,p)=>s+deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0),0);
+      // Delivered basis — use p.delivered_qty from PO record
+      const deliveredQty=cPOs.reduce((s,p)=>s+Number(p.delivered_qty||0),0);
       const pendingQty=totalQty-deliveredQty;
-      const actualRevenue=cPOs.reduce((s,p)=>{ const dQty=deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0); return s+dQty*Number(p.unit_price); },0);
+      const actualRevenue=cPOs.reduce((s,p)=>s+Number(p.delivered_qty||0)*Number(p.unit_price),0);
       const actualCNShare=totalQty>0?(cnVal*(deliveredQty/totalQty)):0;
       const actualNetRev=actualRevenue-actualCNShare;
-      const actualCost=cPOs.reduce((s,p)=>{ const dQty=deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0); return s+dQty*Number(p.purchase_price); },0);
+      const actualCost=cPOs.reduce((s,p)=>s+Number(p.delivered_qty||0)*Number(p.purchase_price),0);
       const actualProfit=actualNetRev-actualCost; // biz exp not allocated per customer
       const profit=actualProfit; // alias for alert logic
 
@@ -1268,7 +1303,7 @@ export default function DashboardPage() {
     return {
       // Order summary
       totalOrderedUnits,totalDeliveredUnits,totalPendingUnits,
-      totalPOs:pos.length,
+      totalPOs:fyPos.length,
       // Ordered (expected) basis
       totalSalesGross,totalNetSales,totalCNValue,totalFOCCost,totalOrderedCost,totalExpectedProfit,
       // Delivered (actual) basis
@@ -1277,7 +1312,7 @@ export default function DashboardPage() {
       totalUnits:totalOrderedUnits,totalPurchCost:totalOrderedCost,totalProfit:totalActualProfit,
       totalAdvances,pendingAdvance,avgSP,perCustomer,unfulfilled
     };
-  },[customers,pos,cns,bizExp,poFinancials]);
+  },[customers,pos,cns,bizExp,poFinancials,targets,selectedFY,deliveries]);
 
   // ── Biz expense analytics ─────────────────────────────────────────────────
   const bizExpAnalytics = useMemo(()=>{
@@ -1310,22 +1345,19 @@ export default function DashboardPage() {
       ...bizExp.map(e=>e.expense_date||''),
     ].filter(Boolean).sort();
     // Use FY months as the primary buckets
+    // B11 fix: Cash In = payment_receipts + manual Cash In txns only
+    // Do NOT add p.advance from PO record — that's the same money, just stored in two places
     const monthly=fyMonths.map(m=>{
-      const advancesIn=pos.filter(p=>p.po_date>=m.start&&p.po_date<=m.end).reduce((s,p)=>s+Number(p.advance||0),0);
       const receiptsIn=receipts.filter(r=>r.receipt_date>=m.start&&r.receipt_date<=m.end).reduce((s,r)=>s+Number(r.amount||0),0);
       const txnIn=cashTxns.filter(t=>t.txn_date>=m.start&&t.txn_date<=m.end&&t.txn_type==='Cash In').reduce((s,t)=>s+Number(t.amount||0),0);
       const mfrPay=pos.filter(p=>{ const d=p.purchase_date||p.po_date; return d&&d>=m.start&&d<=m.end; }).reduce((s,p)=>s+Number(p.qty)*Number(p.purchase_price||0),0);
       const txnOut=cashTxns.filter(t=>t.txn_date>=m.start&&t.txn_date<=m.end&&t.txn_type==='Cash Out').reduce((s,t)=>s+Number(t.amount||0),0);
       const mfrExp2=mfrExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.total_amount||0),0);
       const bizExpOut=bizExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.total_amount||0),0);
-      const totalIn=advancesIn+receiptsIn+txnIn, totalOut=mfrPay+txnOut+mfrExp2+bizExpOut;
-      return {label:m.label,cashIn:totalIn,cashOut:totalOut,net:totalIn-totalOut,advancesIn,receiptsIn,txnIn,mfrPay,mfrExp2,bizExpOut,txnOut};
+      const totalIn=receiptsIn+txnIn, totalOut=mfrPay+txnOut+mfrExp2+bizExpOut;
+      return {label:m.label,cashIn:totalIn,cashOut:totalOut,net:totalIn-totalOut,receiptsIn,txnIn,mfrPay,mfrExp2,bizExpOut,txnOut};
     });
-    // Debug: log first date and last date in data vs FY range
-    console.log('[CashFlow] FY:',activeFY.fy_label,'start:',activeFY.fy_start,'end:',activeFY.fy_end);
-    console.log('[CashFlow] PO count:',pos.length,'Receipt count:',receipts.length);
-    console.log('[CashFlow] First PO date:',pos[0]?.po_date,'Last PO date:',pos[pos.length-1]?.po_date);
-    console.log('[CashFlow] Monthly totals:',monthly.map(m=>m.label+':'+m.cashIn));
+
 
     const totalIn=monthly.reduce((s,m)=>s+m.cashIn,0);
     const totalOut=monthly.reduce((s,m)=>s+m.cashOut,0);
@@ -1551,7 +1583,10 @@ export default function DashboardPage() {
         {view==='dashboard'&&(<div>
           <div style={{marginBottom:20,paddingBottom:14,borderBottom:'1px solid #e0d8cc'}}>
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',letterSpacing:'.16em',marginBottom:4}}>BASILSPHERE INNOVATIONS PRIVATE LIMITED</div>
-            <div style={{fontFamily:"'Noto Sans JP',sans-serif",fontSize:20,fontWeight:300,color:'#2c2520',letterSpacing:'.02em'}}>Executive Overview</div>
+            <div style={{display:'flex',alignItems:'center',gap:16}}>
+              <div style={{fontFamily:"'Noto Sans JP',sans-serif",fontSize:20,fontWeight:300,color:'#2c2520',letterSpacing:'.02em'}}>Executive Overview</div>
+              <FYSelector/>
+            </div>
             <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:'#a09689',marginTop:3}}>GSTIN: {COMPANY.gstin} · {COMPANY.address}</div>
           </div>
           {/* Row 1 — Order Summary */}
@@ -1659,6 +1694,41 @@ export default function DashboardPage() {
           </div>
           {analytics.perCustomer.filter(c=>c.isLoss&&!c.atRisk).map(c=><AlertBox key={'loss-'+c.id} msg={`${c.name} — Loss-making: Actual Profit ${fmtC(c.actualProfit)} (Revenue ${fmtC(c.actualNetRev)} vs Cost ${fmtC(c.actualCost)})`}/>)}
           {analytics.perCustomer.filter(c=>c.atRisk).map(c=><AlertBox key={'risk-'+c.id} msg={`${c.name} — Avg SP (${fmtC(c.avgSP)}) below Avg PP (${fmtC(c.avgPP)})`}/>)}
+
+          {/* P2.4: Action Required Panel */}
+          {(()=>{
+            const actions=[];
+            // Delivered but not invoiced
+            pos.filter(p=>Number(p.delivered_qty)>0).forEach(p=>{
+              const fin=poFinancials(p);
+              if(fin.unbilledQty>0) actions.push({type:'invoice',label:`${p.id} — ${fin.unbilledQty} units delivered but not invoiced`,po:p});
+            });
+            // Open POs aging > 90 days with no delivery
+            const today=new Date();
+            pos.filter(p=>p.status!=='Delivered / Fulfilled'&&Number(p.delivered_qty||0)===0).forEach(p=>{
+              const days=Math.floor((today-new Date(p.po_date))/(1000*86400));
+              if(days>90) actions.push({type:'aging',label:`${p.id} — ${days} days old, no delivery logged yet`,po:p});
+            });
+            // Pending collections > 90 days
+            analytics.perCustomer.filter(c=>c.pending>0).forEach(c=>{
+              const oldPOs=pos.filter(p=>p.customer_id===c.id&&p.status!=='Delivered / Fulfilled');
+              const oldest=oldPOs.reduce((min,p)=>p.po_date<min?p.po_date:min,'9999');
+              const days=oldest!=='9999'?Math.floor((today-new Date(oldest))/(1000*86400)):0;
+              if(days>90) actions.push({type:'collection',label:`${c.name} — ₹${fmtL(c.pending)} outstanding, oldest PO ${days} days`,cust:c});
+            });
+            if(actions.length===0) return null;
+            return <div style={{...card,padding:18,marginTop:16,borderColor:'#b85a5a',borderWidth:1}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#b85a5a',letterSpacing:'.14em',marginBottom:12}}>⚡ ACTION REQUIRED ({actions.length})</div>
+              {actions.map((a,i)=>(
+                <div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:'7px 0',borderBottom:i<actions.length-1?'1px solid #f0ebe4':'none'}}>
+                  <span style={{fontSize:12}}>{a.type==='invoice'?'🧾':a.type==='aging'?'⏳':'💰'}</span>
+                  <span style={{fontSize:12,color:'#5a4a3a',fontFamily:"'DM Mono',monospace"}}>{a.label}</span>
+                  {a.po&&<button onClick={()=>setView('pos')} style={{marginLeft:'auto',background:'#fdf6ec',border:'1px solid #e0d8cc',color:'#b8924a',borderRadius:4,padding:'3px 10px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}>View →</button>}
+                  {a.cust&&<button onClick={()=>{setLedgerCust(a.cust.id);setView('ledger');}} style={{marginLeft:'auto',background:'#fdf6ec',border:'1px solid #e0d8cc',color:'#b8924a',borderRadius:4,padding:'3px 10px',cursor:'pointer',fontSize:10,fontFamily:"'DM Mono',monospace",whiteSpace:'nowrap'}}>Ledger →</button>}
+                </div>
+              ))}
+            </div>;
+          })()}
         </div>)}
 
         {/* ════ EXPENSES ════ */}
@@ -1734,13 +1804,14 @@ export default function DashboardPage() {
           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12,flexWrap:'wrap'}}>
             <div style={{fontSize:10,color:'#8a7e72',fontFamily:"'DM Mono',monospace"}}>FILTER:</div>
             {['All',...EXP_CATS].map(cat=><button key={cat} onClick={()=>setExpCatFilter(cat)} style={{background:expCatFilter===cat?catColor(cat)+'22':'transparent',border:`1px solid ${expCatFilter===cat?catColor(cat):'#e0d8cc'}`,color:expCatFilter===cat?catColor(cat):'#8a7e72',borderRadius:3,padding:'3px 10px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:10}}>{cat}</button>)}
+            <input className="search-bar" type="text" placeholder="🔍  Search vendor, description…" value={searchExp} onChange={e=>setSearchExp(e.target.value)} style={{marginLeft:'auto',width:220}}/>
           </div>
           <div style={{...card,overflow:'auto'}}>
             <table>
               <thead><tr>{['Date','Category','Description','Vendor','Base Amount','GST Rate','GST','Total','GST Claimable','Payment','Invoice Ref',''].map(h=><th key={h}>{h}</th>)}</tr></thead>
-              <tbody>{bizExpAnalytics.filtered.length===0
+              <tbody>{bizExpAnalytics.filtered.filter(e=>!searchExp||(e.description||'').toLowerCase().includes(searchExp.toLowerCase())||(e.vendor_name||'').toLowerCase().includes(searchExp.toLowerCase())).length===0
                 ?<tr><td colSpan={12} style={{textAlign:'center',color:'#7a6e64',padding:24}}>No expenses recorded yet.</td></tr>
-                :bizExpAnalytics.filtered.map(e=>(
+                :bizExpAnalytics.filtered.filter(e=>!searchExp||(e.description||'').toLowerCase().includes(searchExp.toLowerCase())||(e.vendor_name||'').toLowerCase().includes(searchExp.toLowerCase())).map(e=>( 
                 <tr key={e.id}>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72'}}>{e.expense_date}</td>
                   <td><span style={{fontSize:10,fontFamily:"'DM Mono',monospace",color:catColor(e.category),background:catColor(e.category)+'20',borderRadius:4,padding:'2px 6px'}}>{e.category}</span></td>
@@ -1784,14 +1855,13 @@ export default function DashboardPage() {
             </div>
             <div style={{...card,overflow:'auto',marginBottom:18}}>
               <table>
-                <thead><tr>{['Month','Cash In','Cash Out','Net','Advances','Receipts','Mfr Payments','Mfr Expenses','Biz Expenses','Other Out'].map(h=><th key={h}>{h}</th>)}</tr></thead>
+                <thead><tr>{['Month','Cash In','Cash Out','Net','Receipts','Mfr Payments','Mfr Expenses','Biz Expenses','Other Out'].map(h=><th key={h}>{h}</th>)}</tr></thead>
                 <tbody>{cashAnalytics.monthly.map(m=>(
                   <tr key={m.label}>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#b8924a'}}>{m.label}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.cashIn>0?fmtX(m.cashIn):'—'}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#b85a5a'}}>{m.cashOut>0?fmtX(m.cashOut):'—'}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:m.net>=0?'#2d8a5e':'#b85a5a',fontWeight:600}}>{m.cashIn>0||m.cashOut>0?fmtX(m.net):'—'}</td>
-                    <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.advancesIn>0?fmtX(m.advancesIn):'—'}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#2d8a5e'}}>{m.receiptsIn>0?fmtX(m.receiptsIn):'—'}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.mfrPay>0?fmtX(m.mfrPay):'—'}</td>
                     <td style={{fontFamily:"'DM Mono',monospace",color:'#7a6e64'}}>{m.mfrExp2>0?fmtX(m.mfrExp2):'—'}</td>
@@ -2040,13 +2110,22 @@ export default function DashboardPage() {
         {/* ════ ORDERS ════ */}
         {view==='pos'&&(<div>
           <div className="sec">All Purchase Orders</div>
+          {(()=>{ const unbilled=pos.filter(p=>Number(p.delivered_qty||0)>0&&poFinancials(p).unbilledQty>0); return unbilled.length>0?(
+            <div style={{background:'#fff8e8',border:'1px solid #e8c87a',borderRadius:6,padding:'10px 14px',marginBottom:14,display:'flex',alignItems:'center',gap:10}}>
+              <span>⚠️</span>
+              <span style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:'#8a6020'}}>
+                <strong>{unbilled.length} PO{unbilled.length>1?'s':''}</strong> with delivered units not yet invoiced: {unbilled.map(p=>p.id).join(', ')}
+              </span>
+            </div>
+          ):null; })()}
           <div style={{...card,padding:18,marginBottom:16}}>
             <div style={{fontSize:11,color:'#b8924a',fontFamily:"'DM Mono',monospace",marginBottom:12}}>+ NEW PURCHASE ORDER</div>
             <div style={{...g4,marginBottom:12}}>
               <div>
                 <label style={lbl}>PO Number * <span style={{color:'#a09689',fontSize:9,textTransform:'none',letterSpacing:0}}>(auto or manual)</span></label>
                 <div style={{display:'flex',gap:6}}>
-                  <input style={{...inp,flex:1}} type="text" placeholder={`${COMPANY.poPrefix}0001/25-26`} value={poForm.po_id} onChange={e=>setPoForm({...poForm,po_id:e.target.value})}/>
+                  <input style={{...inp,flex:1,borderColor:pos.find(p=>p.id===poForm.po_id.trim())?'#b85a5a':'#e0d8cc'}} type="text" placeholder={`${COMPANY.poPrefix}0001/25-26`} value={poForm.po_id} onChange={e=>setPoForm({...poForm,po_id:e.target.value})}/>
+                  {pos.find(p=>p.id===poForm.po_id.trim())&&<div style={{fontSize:10,color:'#b85a5a',marginTop:3,fontFamily:"'DM Mono',monospace"}}>⚠ This PO number already exists</div>}
                   <button type="button" onClick={()=>setPoForm({...poForm,po_id:nextPONumber()})} style={{...btn(false,'#d4cdc2','#b8924a'),border:'1px solid #b8924a',padding:'8px 10px',fontSize:10,flexShrink:0}}>AUTO</button>
                 </div>
               </div>
@@ -2707,9 +2786,9 @@ export default function DashboardPage() {
           {(()=>{
             const openPOs=pos.filter(p=>p.status!=='Delivered / Fulfilled');
             const totalOrdered=openPOs.reduce((s,p)=>s+p.qty,0);
-            const totalDelivered=openPOs.reduce((s,p)=>s+deliveries.filter(d=>d.po_id===p.id).reduce((s2,d)=>s2+d.qty_delivered,0),0);
+            const totalDelivered=openPOs.reduce((s,p)=>s+Number(p.delivered_qty||0),0);
             const totalPending=totalOrdered-totalDelivered;
-            const partialPOs=openPOs.filter(p=>{ const d=deliveries.filter(x=>x.po_id===p.id).reduce((s,x)=>s+x.qty_delivered,0); return d>0&&d<p.qty; });
+            const partialPOs=openPOs.filter(p=>Number(p.delivered_qty||0)>0&&Number(p.delivered_qty||0)<p.qty);
             return <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:20}}>
               <KPICard label="Open POs" val={openPOs.length} color="#b8924a"/>
               <KPICard label="Total Units Ordered" val={fmt(totalOrdered)} color="#2d7fa8"/>
@@ -2727,7 +2806,7 @@ export default function DashboardPage() {
                   <option value="">Select open PO…</option>
                   {pos.filter(p=>p.status!=='Delivered / Fulfilled').map(p=>{
                     const cust=customers.find(c=>c.id===p.customer_id);
-                    const delivered=deliveries.filter(d=>d.po_id===p.id).reduce((s,d)=>s+d.qty_delivered,0);
+                    const delivered=Number(p.delivered_qty||0);
                     const rem=p.qty-delivered;
                     return <option key={p.id} value={p.id}>{p.id} — {cust?.name} ({rem} remaining)</option>;
                   })}
@@ -2743,11 +2822,14 @@ export default function DashboardPage() {
           </div>
 
           {/* Per-PO delivery status */}
-          <div className="sec">Delivery Status by PO</div>
-          {pos.filter(p=>{ const d=deliveries.filter(x=>x.po_id===p.id); return d.length>0||p.status!=='Delivered / Fulfilled'; }).map(p=>{
+          <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:8}}>
+            <div className="sec" style={{marginBottom:0}}>Delivery Status by PO</div>
+            <input className="search-bar" type="text" placeholder="🔍  Search PO or customer…" value={searchDel} onChange={e=>setSearchDel(e.target.value)} style={{marginLeft:'auto',width:220}}/>
+          </div>
+          {pos.filter(p=>{ const d=deliveries.filter(x=>x.po_id===p.id); const show=d.length>0||p.status!=='Delivered / Fulfilled'; if(!show) return false; if(!searchDel) return true; const cust=customers.find(c=>c.id===p.customer_id); return p.id.toLowerCase().includes(searchDel.toLowerCase())||(cust?.name||'').toLowerCase().includes(searchDel.toLowerCase()); }).map(p=>{
             const cust=customers.find(c=>c.id===p.customer_id);
             const poDeliveries=deliveries.filter(d=>d.po_id===p.id).sort((a,b)=>a.delivery_date>b.delivery_date?-1:1);
-            const delivered=poDeliveries.reduce((s,d)=>s+d.qty_delivered,0);
+            const delivered=Number(p.delivered_qty||0); // use PO field — authoritative
             const rem=p.qty-delivered;
             const pct2=p.qty>0?Math.min(100,(delivered/p.qty)*100):0;
             return <div key={p.id} style={{...card,marginBottom:10,padding:16}}>
@@ -2868,7 +2950,11 @@ export default function DashboardPage() {
             </div>
           </div>
           {/* Group sites by PO */}
-          {pos.filter(p=>sites.some(s=>s.po_id===p.id)).map(p=>{
+          <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:12}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',letterSpacing:'.14em'}}>DELIVERY SITES</div>
+            <input className="search-bar" type="text" placeholder="🔍  Search PO, customer or site name…" value={searchSite} onChange={e=>setSearchSite(e.target.value)} style={{marginLeft:'auto',width:240}}/>
+          </div>
+          {pos.filter(p=>sites.some(s=>s.po_id===p.id)).filter(p=>{ if(!searchSite) return true; const cust=customers.find(c=>c.id===p.customer_id); const poSites=sites.filter(s=>s.po_id===p.id); return p.id.toLowerCase().includes(searchSite.toLowerCase())||(cust?.name||'').toLowerCase().includes(searchSite.toLowerCase())||poSites.some(s=>(s.site_name||'').toLowerCase().includes(searchSite.toLowerCase())); }).map(p=>{
             const cust=customers.find(c=>c.id===p.customer_id);
             const poSites=sites.filter(s=>s.po_id===p.id);
             const allocatedQty=poSites.reduce((s,x)=>s+x.qty,0);
@@ -2932,17 +3018,22 @@ export default function DashboardPage() {
             // Build ledger entries: po_invoices rows + advances + payments + CNs
             const entries=[];
             custPOs.forEach(p=>{
-              // P2.6: use actual invoice rows as Dr entries
               const invRows=poInvoices.filter(i=>i.po_id===p.id);
-              invRows.forEach(inv=>{
-                const net=inv.qty*inv.unit_price-Number(inv.discount_amount||0);
-                const gst=net*(Number(inv.gst_rate||12)/100);
-                const total=net+gst;
-                entries.push({date:inv.invoice_date,type:'Invoice',ref:inv.invoice_no,description:`Tax Invoice — ${inv.qty} units @ ${fmtX(inv.unit_price)}`,debit:total,credit:0,inv});
-              });
-              // If no invoice rows yet, show nothing (no longer use poFinancials estimate)
-              // Advance on PO = credit
-              if(p.advance>0) entries.push({date:p.po_date,type:'Advance',ref:p.id,description:`Advance against ${p.id}`,debit:0,credit:Number(p.advance)});
+              if(invRows.length>0){
+                // Use actual po_invoices rows as Dr entries
+                invRows.forEach(inv=>{
+                  const net=inv.qty*inv.unit_price-Number(inv.discount_amount||0);
+                  const gst=net*(Number(inv.gst_rate||Number(p.gst_rate)||12)/100);
+                  const total=net+gst;
+                  entries.push({date:inv.invoice_date,type:'Invoice',ref:inv.invoice_no,description:`Tax Invoice — ${inv.qty} units @ ${fmtX(inv.unit_price)}`,debit:total,credit:0,inv});
+                });
+              } else {
+                // B8 fix: No invoice yet — post order value as Dr so advance doesn't go negative
+                const fin=poFinancials(p);
+                entries.push({date:p.po_date,type:'Order',ref:p.id,description:`PO Value — ${p.qty} units @ ${fmtX(p.unit_price)} (invoice pending)`,debit:fin.orderedTotal,credit:0});
+              }
+              // Advance on PO = Cr
+              if(Number(p.advance)>0) entries.push({date:p.po_date,type:'Advance',ref:p.id,description:`Advance received against ${p.id}`,debit:0,credit:Number(p.advance)});
             });
             custCNs.forEach(c=>{
               if(c.type==='CNNote') entries.push({date:c.cn_date,type:'Credit Note',ref:`CN-${c.id}`,description:c.note||'Credit Note',debit:0,credit:Number(c.amount),cn:c});
@@ -2960,6 +3051,7 @@ export default function DashboardPage() {
             const totalDebit=entries.reduce((s,e)=>s+e.debit,0);
             const totalCredit=entries.reduce((s,e)=>s+e.credit,0);
             const outstanding=totalDebit-totalCredit;
+            const isReconciled=Math.abs(outstanding)<0.01;
 
             return <>
               {/* Customer summary */}
@@ -2977,6 +3069,13 @@ export default function DashboardPage() {
                       <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,color:c,fontWeight:600}}>{v}</div>
                     </div>
                   ))}
+                  <div style={{borderLeft:'1px solid #d4cdc2',paddingLeft:20,textAlign:'center'}}>
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689',marginBottom:6}}>STATUS</div>
+                    {isReconciled
+                      ?<span style={{background:'#d1ead8',color:'#2d8a5e',border:'1px solid #5a9e6f',borderRadius:4,padding:'4px 10px',fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:600}}>✓ RECONCILED</span>
+                      :<span style={{background:'#fff0e8',color:'#b85a5a',border:'1px solid #e8c0b0',borderRadius:4,padding:'4px 10px',fontFamily:"'DM Mono',monospace",fontSize:11,fontWeight:600}}>⚠ OPEN</span>
+                    }
+                  </div>
                 </div>
               </div>
 
