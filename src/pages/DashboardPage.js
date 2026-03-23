@@ -1207,7 +1207,7 @@ export default function DashboardPage() {
       invoicedQty, billedQty, unbilledQty, invoicedNetTax, invoicedGst,
       invoicedAmt, advance, balanceDue, invRows
     };
-  }, [deliveries, poInvoices, settings, pos]);
+  }, [poInvoices, settings, pos]);
 
 
   const analytics = useMemo(()=>{
@@ -1215,11 +1215,11 @@ export default function DashboardPage() {
     const fyT=targets.find(t=>t.fy_label===selectedFY)||targets[0];
     const today4=new Date();
     const fyYear4=today4.getMonth()>=3?today4.getFullYear():today4.getFullYear()-1;
-    const fyStart=fyT?fyT.fy_start:`${fyYear4}-04-01`;
-    const fyEnd=fyT?fyT.fy_end:`${fyYear4+1}-03-31`;
-    const fyPos=pos.filter(p=>p.po_date>=fyStart&&p.po_date<=fyEnd);
-    const fyCns=cns.filter(c=>{ const po=pos.find(p=>p.id===c.po_id); return po&&po.po_date>=fyStart&&po.po_date<=fyEnd; });
-    const fyBizExp=bizExp.filter(e=>e.expense_date>=fyStart&&e.expense_date<=fyEnd);
+    const fyStart=fyT?String(fyT.fy_start).slice(0,10):`${fyYear4}-04-01`;
+    const fyEnd=fyT?String(fyT.fy_end).slice(0,10):`${fyYear4+1}-03-31`;
+    const fyPos=pos.filter(p=>{ const d=String(p.po_date||'').slice(0,10); return d>=fyStart&&d<=fyEnd; });
+    const fyCns=cns.filter(c=>{ const po=pos.find(p=>p.id===c.po_id); if(!po) return false; const d=String(po.po_date||'').slice(0,10); return d>=fyStart&&d<=fyEnd; });
+    const fyBizExp=bizExp.filter(e=>{ const d=String(e.expense_date||'').slice(0,10); return d>=fyStart&&d<=fyEnd; });
 
     // ── Ordered basis (all POs in FY, regardless of delivery) ──
     const totalOrderedUnits  = fyPos.reduce((s,p)=>s+p.qty,0);
@@ -1350,7 +1350,8 @@ export default function DashboardPage() {
     const monthly=fyMonths.map(m=>{
       const receiptsIn=receipts.filter(r=>r.receipt_date>=m.start&&r.receipt_date<=m.end).reduce((s,r)=>s+Number(r.amount||0),0);
       const txnIn=cashTxns.filter(t=>t.txn_date>=m.start&&t.txn_date<=m.end&&t.txn_type==='Cash In').reduce((s,t)=>s+Number(t.amount||0),0);
-      const mfrPay=pos.filter(p=>{ const d=p.purchase_date||p.po_date; return d&&d>=m.start&&d<=m.end; }).reduce((s,p)=>s+Number(p.qty)*Number(p.purchase_price||0),0);
+      // Use actual WP payments logged (net_payable) bucketed by payment_date
+      const mfrPay=wpPayments.filter(w=>{ const d=String(w.payment_date||'').slice(0,10); return d>=m.start&&d<=m.end; }).reduce((s,w)=>s+Number(w.net_payable||0),0);
       const txnOut=cashTxns.filter(t=>t.txn_date>=m.start&&t.txn_date<=m.end&&t.txn_type==='Cash Out').reduce((s,t)=>s+Number(t.amount||0),0);
       const mfrExp2=mfrExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.total_amount||0),0);
       const bizExpOut=bizExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.total_amount||0),0);
@@ -1363,7 +1364,7 @@ export default function DashboardPage() {
     const totalOut=monthly.reduce((s,m)=>s+m.cashOut,0);
     const f=(d)=>pipeline.filter(p=>p.status==='Active'&&new Date(p.expected_date)<=d).reduce((s,p)=>s+(p.expected_value||p.expected_qty*(p.delivery_type==='DDP'?settings.default_purchase_price_ddp:settings.default_purchase_price_exw))*p.probability/100,0);
     return {monthly,totalIn,totalOut,netCF:totalIn-totalOut,expectedInflows:analytics.pendingAdvance,forecast30:f(d30),forecast60:f(d60),forecast90:f(d90),fy:activeFY};
-  },[pos,cashTxns,mfrExp,bizExp,pipeline,targets,selectedFY,settings,analytics,receipts]);
+  },[pos,cashTxns,mfrExp,bizExp,pipeline,targets,selectedFY,settings,analytics,receipts,wpPayments]);
 
   // ── GST analytics (rate from Settings) ───────────────────────────────────
   const gstAnalytics = useMemo(()=>{
@@ -1381,7 +1382,8 @@ export default function DashboardPage() {
       const outputGST=mInvs.reduce((s,i)=>{ const r=Number(i.gst_rate||settings.gst_rate_sales||12)/100; const net=i.qty*i.unit_price-Number(i.discount_amount||0); return s+net*r; },0);
       // Input GST on purchase: use invoice_date if available, fallback po_date
       const mPos=pos.filter(p=>{ const d=p.invoice_date||p.po_date; return d>=m.start&&d<=m.end; });
-      const inputGSTPurch=mPos.reduce((s,p)=>{ const r=(Number(p.gst_rate??settings.gst_rate_sales??12))/100; return s+p.qty*Number(p.purchase_price)*r; },0);
+      // Input GST on purchase — use delivered_qty (goods actually received)
+      const inputGSTPurch=mPos.reduce((s,p)=>{ const r=(Number(p.gst_rate??settings.gst_rate_sales??12))/100; return s+Number(p.delivered_qty||0)*Number(p.purchase_price)*r; },0);
       const inputGSTMfrExp=mfrExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.gst_amount),0);
       const inputGSTBizExp=bizExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end&&e.is_gst_claimable).reduce((s,e)=>s+Number(e.gst_amount),0);
       const totalInput=inputGSTPurch+inputGSTMfrExp+inputGSTBizExp;
@@ -1412,21 +1414,72 @@ export default function DashboardPage() {
   const targetAnalytics = useMemo(()=>{
     const fy=targets.find(t=>t.fy_label===selectedFY)||targets[0];
     if (!fy) return null;
-    const fyPos=pos.filter(p=>p.po_date>=fy.fy_start&&p.po_date<=fy.fy_end);
-    const fyCNs=cns.filter(c=>{ const po=pos.find(p=>p.id===c.po_id); return po&&po.po_date>=fy.fy_start&&po.po_date<=fy.fy_end; });
-    const actualUnits=fyPos.reduce((s,p)=>s+p.qty,0);
-    const actualGross=fyPos.reduce((s,p)=>s+p.qty*p.unit_price,0);
-    const actualCN=fyCNs.filter(c=>c.type==='CNNote').reduce((s,c)=>s+Number(c.amount),0);
-    const actualFOCCost=fyCNs.filter(c=>c.type==='FOC').reduce((s,c)=>{ const po=pos.find(p=>p.id===c.po_id); return s+c.foc_units*Number(po?.purchase_price||0); },0);
-    const actualNet=actualGross-actualCN;
-    const actualCost=fyPos.reduce((s,p)=>s+p.qty*Number(p.purchase_price),0)+actualFOCCost;
-    const fyBizExp=bizExp.filter(e=>e.expense_date>=fy.fy_start&&e.expense_date<=fy.fy_end).reduce((s,e)=>s+Number(e.total_amount),0);
-    const actualProfit=actualNet-actualCost-fyBizExp;
-    const monthly=FY_MONTHS(fy.fy_label).map(m=>({label:m.label,units:fyPos.filter(p=>p.po_date>=m.start&&p.po_date<=m.end).reduce((s,p)=>s+p.qty,0),value:fyPos.filter(p=>p.po_date>=m.start&&p.po_date<=m.end).reduce((s,p)=>s+p.qty*p.unit_price,0)}));
-    const el=monthly.filter(m=>m.units>0).length||1;
-    const slab1Hit=fy.mfr_slab_1_units>0&&actualUnits>=fy.mfr_slab_1_units;
-    const slab2Hit=fy.mfr_slab_2_units>0&&actualUnits>=fy.mfr_slab_2_units;
-    return {fy,actualUnits,actualNet,actualCost,actualProfit,monthly,runRateUnits:(actualUnits/el)*12,runRateValue:(actualNet/el)*12,slab1Hit,slab2Hit,unitsToSlab1:Math.max(0,fy.mfr_slab_1_units-actualUnits),unitsToSlab2:Math.max(0,fy.mfr_slab_2_units-actualUnits)};
+
+    // FY date bounds — ensure consistent string comparison (YYYY-MM-DD)
+    const fyStart=String(fy.fy_start).slice(0,10);
+    const fyEnd=String(fy.fy_end).slice(0,10);
+
+    // POs and CNs within this FY by po_date
+    const fyPos=pos.filter(p=>{
+      const d=String(p.po_date||'').slice(0,10);
+      return d>=fyStart && d<=fyEnd;
+    });
+    const fyCNs=cns.filter(c=>{
+      const po=pos.find(p=>p.id===c.po_id);
+      if(!po) return false;
+      const d=String(po.po_date||'').slice(0,10);
+      return d>=fyStart && d<=fyEnd;
+    });
+
+    // Units: ordered (booked) and delivered (shipped)
+    const actualUnitsOrdered  = fyPos.reduce((s,p)=>s+Number(p.qty||0),0);
+    const actualUnitsDelivered= fyPos.reduce((s,p)=>s+Number(p.delivered_qty||0),0);
+
+    // Revenue: ordered basis (gross bookings) and net of CNs
+    const actualGross  = fyPos.reduce((s,p)=>s+Number(p.qty||0)*Number(p.unit_price||0),0);
+    const actualCN     = fyCNs.filter(c=>c.type==='CNNote').reduce((s,c)=>s+Number(c.amount||0),0);
+    const actualFOCCost= fyCNs.filter(c=>c.type==='FOC').reduce((s,c)=>{
+      const po=pos.find(p=>p.id===c.po_id);
+      return s+Number(c.foc_units||0)*Number(po?.purchase_price||0);
+    },0);
+    const actualNet    = actualGross - actualCN;
+
+    // Cost: ordered basis
+    const actualCost   = fyPos.reduce((s,p)=>s+Number(p.qty||0)*Number(p.purchase_price||0),0)+actualFOCCost;
+
+    // Biz expenses in FY
+    const fyBizExp     = bizExp.filter(e=>{
+      const d=String(e.expense_date||'').slice(0,10);
+      return d>=fyStart && d<=fyEnd;
+    }).reduce((s,e)=>s+Number(e.total_amount||0),0);
+
+    const actualProfit = actualNet - actualCost - fyBizExp;
+
+    // Monthly breakdown
+    const monthly = FY_MONTHS(fy.fy_label).map(m=>({
+      label: m.label,
+      units: fyPos.filter(p=>{ const d=String(p.po_date||'').slice(0,10); return d>=m.start&&d<=m.end; }).reduce((s,p)=>s+Number(p.qty||0),0),
+      delivered: fyPos.filter(p=>{ const d=String(p.po_date||'').slice(0,10); return d>=m.start&&d<=m.end; }).reduce((s,p)=>s+Number(p.delivered_qty||0),0),
+      value: fyPos.filter(p=>{ const d=String(p.po_date||'').slice(0,10); return d>=m.start&&d<=m.end; }).reduce((s,p)=>s+Number(p.qty||0)*Number(p.unit_price||0),0),
+    }));
+
+    const el = monthly.filter(m=>m.units>0).length||1;
+    const slab1Hit = fy.mfr_slab_1_units>0 && actualUnitsOrdered>=fy.mfr_slab_1_units;
+    const slab2Hit = fy.mfr_slab_2_units>0 && actualUnitsOrdered>=fy.mfr_slab_2_units;
+
+    return {
+      fy, fyStart, fyEnd,
+      actualUnits: actualUnitsOrdered,        // ordered — what target tracks
+      actualUnitsDelivered,                    // delivered — physical fulfilment
+      actualNet, actualCost, actualProfit,
+      monthly,
+      runRateUnits: (actualUnitsOrdered/el)*12,
+      runRateValue: (actualNet/el)*12,
+      slab1Hit, slab2Hit,
+      unitsToSlab1: Math.max(0,fy.mfr_slab_1_units-actualUnitsOrdered),
+      unitsToSlab2: Math.max(0,fy.mfr_slab_2_units-actualUnitsOrdered),
+      poCount: fyPos.length, // for debug display
+    };
   },[targets,pos,cns,bizExp,selectedFY]);
 
   // ── Pipeline ──────────────────────────────────────────────────────────────
@@ -1913,18 +1966,26 @@ export default function DashboardPage() {
           {targetAnalytics?(<>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:18,marginBottom:18}}>
               <div style={{...card,padding:22}}>
-                <div className="sec">Achievement — {targetAnalytics.fy.fy_label}</div>
+                <div style={{display:'flex',alignItems:'baseline',gap:12}}>
+                  <div className="sec" style={{marginBottom:0}}>Achievement — {targetAnalytics.fy.fy_label}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#a09689'}}>{targetAnalytics.fyStart} → {targetAnalytics.fyEnd} · {targetAnalytics.poCount} POs</div>
+                </div>
                 <div style={{display:'flex',justifyContent:'space-around',padding:'8px 0'}}>
                   <Ring value={targetAnalytics.actualUnits} max={targetAnalytics.fy.target_units||1} color="#b8924a" label="Units"/>
                   <Ring value={targetAnalytics.actualNet} max={targetAnalytics.fy.target_value||1} color="#2d7fa8" label="Revenue"/>
                   <Ring value={Math.max(0,targetAnalytics.actualProfit)} max={targetAnalytics.fy.target_profit||1} color="#2d8a5e" label="Profit"/>
                 </div>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginTop:14}}>
-                  {[['Units',fmt(targetAnalytics.fy.target_units),fmt(targetAnalytics.actualUnits),'#b8924a'],['Revenue',fmtL(targetAnalytics.fy.target_value),fmtL(targetAnalytics.actualNet),'#2d7fa8'],['Profit',fmtL(targetAnalytics.fy.target_profit),fmtL(targetAnalytics.actualProfit),'#2d8a5e']].map(([l,t,a,c])=>(
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginTop:14}}>
+                  {[
+                    ['Units Ordered',fmt(targetAnalytics.fy.target_units),fmt(targetAnalytics.actualUnits),'#b8924a','Booked business'],
+                    ['Units Delivered','—',fmt(targetAnalytics.actualUnitsDelivered),'#2d8a5e','Physically shipped'],
+                    ['Revenue',fmtL(targetAnalytics.fy.target_value),fmtL(targetAnalytics.actualNet),'#2d7fa8','Net of CNs'],
+                    ['Profit',fmtL(targetAnalytics.fy.target_profit),fmtL(targetAnalytics.actualProfit),'#2d8a5e','After all costs'],
+                  ].map(([l,t,a,c,sub])=>(
                     <div key={l} style={{background:'#f5f0e8',borderRadius:8,padding:10}}>
                       <div style={{fontSize:9,color:'#8a7e72',fontFamily:"'DM Mono',monospace",marginBottom:3}}>{l}</div>
-                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:c}}>{t}</div>
-                      <div style={{fontSize:10,color:'#7a6e64',marginTop:2}}>Actual: {a}</div>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:c}}>{t!=='—'?t:a}</div>
+                      <div style={{fontSize:10,color:'#7a6e64',marginTop:2}}>{t!=='—'?`Actual: ${a}`:sub}</div>
                     </div>
                   ))}
                 </div>
