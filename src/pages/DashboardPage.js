@@ -45,7 +45,7 @@ const FY_MONTHS = fy => {
     {label:'Nov',start:`${yr}-11-01`,end:`${yr}-11-30`},
     {label:'Dec',start:`${yr}-12-01`,end:`${yr}-12-31`},
     {label:'Jan',start:`${yr+1}-01-01`,end:`${yr+1}-01-31`},
-    {label:'Feb',start:`${yr+1}-02-01`,end:`${yr+1}-02-28`},
+    {label:'Feb',start:`${yr+1}-02-01`,end:`${yr+1}-02-${new Date(yr+1,2,0).getDate()}`},
     {label:'Mar',start:`${yr+1}-03-01`,end:`${yr+1}-03-31`},
   ];
 };
@@ -294,7 +294,7 @@ const POInvoicePanel = ({po, fin, poInvoices, invoiceForm, setInvoiceForm, onAdd
               <input style={inp} type="number" min="1" max={remaining} value={f.qty}
                 onChange={e=>setInvoiceForm({...f,qty:e.target.value})}/>
             </div>
-            <div><label style={lbl}>Unit Price (₹) *</label>
+            <div><label style={lbl}>Unit Price (₹, excl. GST) *</label>
               <input style={{...inp,borderColor:f.unit_price&&Number(f.unit_price)!==Number(po.unit_price)?'#8060c0':'#e0d8cc'}} type="number"
                 placeholder={String(po.unit_price)}
                 value={f.unit_price||po.unit_price}
@@ -1169,8 +1169,10 @@ export default function DashboardPage() {
   // invoicedAmt  = deliveredQty × unit_price − discount_prorated + GST
   // balanceDue   = invoicedAmt − advance (floor 0)
   const poFinancials = useCallback((p) => {
-    const deliveredQty = Number(p.delivered_qty||0); // use denormalised field — kept in sync by app
-    const orderedQty   = p.qty || 0;
+    // Compute delivered qty from delivery_entries (source of truth)
+    const delRows = deliveries.filter(d=>d.po_id===p.id);
+    const deliveredQty = delRows.length > 0 ? delRows.reduce((s,d)=>s+Number(d.qty_delivered||0),0) : Number(p.delivered_qty||0);
+    const orderedQty   = Number(p.qty) || 0;
     const unitPrice    = Number(p.unit_price) || 0;
     const discountAmt  = Number(p.discount_amount) || 0;
     const poGstRate    = Number(p.gst_rate ?? settings.gst_rate_sales ?? 12);
@@ -1207,7 +1209,7 @@ export default function DashboardPage() {
       invoicedQty, billedQty, unbilledQty, invoicedNetTax, invoicedGst,
       invoicedAmt, advance, balanceDue, invRows
     };
-  }, [poInvoices, settings, pos]);
+  }, [poInvoices, settings, pos, deliveries]);
 
 
   const analytics = useMemo(()=>{
@@ -1222,22 +1224,30 @@ export default function DashboardPage() {
     const fyBizExp=bizExp.filter(e=>{ const d=String(e.expense_date||'').slice(0,10); return d>=fyStart&&d<=fyEnd; });
 
     // ── Ordered basis (all POs in FY, regardless of delivery) ──
-    const totalOrderedUnits  = fyPos.reduce((s,p)=>s+p.qty,0);
-    const totalSalesGross    = fyPos.reduce((s,p)=>s+p.qty*p.unit_price,0);
+    const totalOrderedUnits  = fyPos.reduce((s,p)=>s+Number(p.qty||0),0);
+    const totalSalesGross    = fyPos.reduce((s,p)=>s+Number(p.qty||0)*Number(p.unit_price||0),0);
     const totalCNValue       = fyCns.filter(c=>c.type==='CNNote').reduce((s,c)=>s+Number(c.amount),0);
     const totalFOCCost       = fyCns.filter(c=>c.type==='FOC').reduce((s,c)=>{ const po=pos.find(p=>p.id===c.po_id); return s+c.foc_units*Number(po?.purchase_price||0); },0);
     const totalNetSales      = totalSalesGross-totalCNValue;
-    const totalOrderedCost   = fyPos.reduce((s,p)=>s+p.qty*Number(p.purchase_price),0)+totalFOCCost;
+    const totalOrderedCost   = fyPos.reduce((s,p)=>s+Number(p.qty||0)*Number(p.purchase_price),0)+totalFOCCost;
     const totalExpectedProfit= totalNetSales-totalOrderedCost; // no biz exp deducted
 
-    // ── Delivered basis — use p.delivered_qty from PO record (maintained in sync by app) ──
-    const totalDeliveredUnits= fyPos.reduce((s,p)=>s+Number(p.delivered_qty||0),0);
+    // Helper: compute delivered qty from delivery_entries (source of truth)
+    // Falls back to p.delivered_qty only if delivery_entries has no rows for this PO
+    const getDeliveredQty = (p) => {
+      const delRows = deliveries.filter(d=>d.po_id===p.id);
+      if (delRows.length > 0) return delRows.reduce((s,d)=>s+Number(d.qty_delivered||0),0);
+      return Number(p.delivered_qty||0); // fallback to denormalized field
+    };
+
+    // ── Delivered basis — computed from delivery_entries ──
+    const totalDeliveredUnits= fyPos.reduce((s,p)=>s+getDeliveredQty(p),0);
     const totalPendingUnits  = totalOrderedUnits-totalDeliveredUnits;
-    const totalActualRevenue = fyPos.reduce((s,p)=>s+Number(p.delivered_qty||0)*Number(p.unit_price),0);
+    const totalActualRevenue = fyPos.reduce((s,p)=>s+getDeliveredQty(p)*Number(p.unit_price),0);
     // Prorate CNs to delivered qty ratio
     const totalActualCNShare = totalOrderedUnits>0?(totalCNValue*(totalDeliveredUnits/totalOrderedUnits)):0;
     const totalActualNetRev  = totalActualRevenue-totalActualCNShare;
-    const totalActualCost    = fyPos.reduce((s,p)=>s+Number(p.delivered_qty||0)*Number(p.purchase_price),0);
+    const totalActualCost    = fyPos.reduce((s,p)=>s+getDeliveredQty(p)*Number(p.purchase_price),0)+totalFOCCost;
     const totalBizExp        = fyBizExp.reduce((s,e)=>s+Number(e.total_amount),0);
     const totalActualProfit  = totalActualNetRev-totalActualCost-totalBizExp;  // biz exp only on actual
 
@@ -1261,22 +1271,22 @@ export default function DashboardPage() {
       const cCNs=fyCns.filter(c=>c.customer_id===cust.id);
 
       // Ordered basis
-      const grossSales=cPOs.reduce((s,p)=>s+p.qty*p.unit_price,0);
-      const totalQty=cPOs.reduce((s,p)=>s+p.qty,0);
+      const grossSales=cPOs.reduce((s,p)=>s+Number(p.qty||0)*Number(p.unit_price||0),0);
+      const totalQty=cPOs.reduce((s,p)=>s+Number(p.qty||0),0);
       const cnVal=cCNs.filter(c=>c.type==='CNNote').reduce((s,c)=>s+Number(c.amount),0);
       const focUnits=cCNs.filter(c=>c.type==='FOC').reduce((s,c)=>s+c.foc_units,0);
       const focCost=cCNs.filter(c=>c.type==='FOC').reduce((s,c)=>{ const po=pos.find(p=>p.id===c.po_id); return s+c.foc_units*Number(po?.purchase_price||0); },0);
       const netSales=grossSales-cnVal;
-      const purchCost=cPOs.reduce((s,p)=>s+p.qty*Number(p.purchase_price),0)+focCost;
+      const purchCost=cPOs.reduce((s,p)=>s+Number(p.qty||0)*Number(p.purchase_price),0)+focCost;
       const expectedProfit=netSales-purchCost;
 
-      // Delivered basis — use p.delivered_qty from PO record
-      const deliveredQty=cPOs.reduce((s,p)=>s+Number(p.delivered_qty||0),0);
+      // Delivered basis — computed from delivery_entries (source of truth)
+      const deliveredQty=cPOs.reduce((s,p)=>s+getDeliveredQty(p),0);
       const pendingQty=totalQty-deliveredQty;
-      const actualRevenue=cPOs.reduce((s,p)=>s+Number(p.delivered_qty||0)*Number(p.unit_price),0);
+      const actualRevenue=cPOs.reduce((s,p)=>s+getDeliveredQty(p)*Number(p.unit_price),0);
       const actualCNShare=totalQty>0?(cnVal*(deliveredQty/totalQty)):0;
       const actualNetRev=actualRevenue-actualCNShare;
-      const actualCost=cPOs.reduce((s,p)=>s+Number(p.delivered_qty||0)*Number(p.purchase_price),0);
+      const actualCost=cPOs.reduce((s,p)=>s+getDeliveredQty(p)*Number(p.purchase_price),0)+focCost;
       const actualProfit=actualNetRev-actualCost; // biz exp not allocated per customer
       const profit=actualProfit; // alias for alert logic
 
@@ -1316,13 +1326,20 @@ export default function DashboardPage() {
 
   // ── Biz expense analytics ─────────────────────────────────────────────────
   const bizExpAnalytics = useMemo(()=>{
-    const total     = bizExp.reduce((s,e)=>s+Number(e.total_amount),0);
-    const totalBase = bizExp.reduce((s,e)=>s+Number(e.amount),0);
-    const totalGST  = bizExp.reduce((s,e)=>s+Number(e.gst_amount),0);
-    const byCat     = EXP_CATS.reduce((acc,cat)=>{ acc[cat]=bizExp.filter(e=>e.category===cat).reduce((s,e)=>s+Number(e.total_amount),0); return acc; },{});
-    const filtered  = expCatFilter==='All'?bizExp:bizExp.filter(e=>e.category===expCatFilter);
+    // FY-filter expenses to match dashboard scope
+    const fyT=targets.find(t=>t.fy_label===selectedFY)||targets[0];
+    const today5=new Date();
+    const fyYear5=today5.getMonth()>=3?today5.getFullYear():today5.getFullYear()-1;
+    const fyStart5=fyT?String(fyT.fy_start).slice(0,10):`${fyYear5}-04-01`;
+    const fyEnd5=fyT?String(fyT.fy_end).slice(0,10):`${fyYear5+1}-03-31`;
+    const fyBizExpFiltered=bizExp.filter(e=>{ const d=String(e.expense_date||'').slice(0,10); return d>=fyStart5&&d<=fyEnd5; });
+    const total     = fyBizExpFiltered.reduce((s,e)=>s+Number(e.total_amount),0);
+    const totalBase = fyBizExpFiltered.reduce((s,e)=>s+Number(e.amount),0);
+    const totalGST  = fyBizExpFiltered.reduce((s,e)=>s+Number(e.gst_amount),0);
+    const byCat     = EXP_CATS.reduce((acc,cat)=>{ acc[cat]=fyBizExpFiltered.filter(e=>e.category===cat).reduce((s,e)=>s+Number(e.total_amount),0); return acc; },{});
+    const filtered  = expCatFilter==='All'?fyBizExpFiltered:fyBizExpFiltered.filter(e=>e.category===expCatFilter);
     return {total,totalBase,totalGST,byCat,filtered};
-  },[bizExp,expCatFilter]);
+  },[bizExp,expCatFilter,targets,selectedFY]);
 
   // ── Cash Flow ─────────────────────────────────────────────────────────────
   const cashAnalytics = useMemo(()=>{
@@ -1362,7 +1379,11 @@ export default function DashboardPage() {
 
     const totalIn=monthly.reduce((s,m)=>s+m.cashIn,0);
     const totalOut=monthly.reduce((s,m)=>s+m.cashOut,0);
-    const f=(d)=>pipeline.filter(p=>p.status==='Active'&&new Date(p.expected_date)<=d).reduce((s,p)=>s+(p.expected_value||p.expected_qty*(p.delivery_type==='DDP'?settings.default_purchase_price_ddp:settings.default_purchase_price_exw))*p.probability/100,0);
+    const f=(d)=>pipeline.filter(p=>p.status==='Active'&&new Date(p.expected_date)<=d).reduce((s,p)=>{
+      // Use expected_value if explicitly set (>0), otherwise estimate from qty × avg selling price
+      const val = Number(p.expected_value)>0 ? Number(p.expected_value) : p.expected_qty*(analytics.avgSP||settings.default_purchase_price_ddp*1.15);
+      return s+val*p.probability/100;
+    },0);
     return {monthly,totalIn,totalOut,netCF:totalIn-totalOut,expectedInflows:analytics.pendingAdvance,forecast30:f(d30),forecast60:f(d60),forecast90:f(d90),fy:activeFY};
   },[pos,cashTxns,mfrExp,bizExp,pipeline,targets,selectedFY,settings,analytics,receipts,wpPayments]);
 
@@ -1383,7 +1404,7 @@ export default function DashboardPage() {
       // Input GST on purchase: use invoice_date if available, fallback po_date
       const mPos=pos.filter(p=>{ const d=p.invoice_date||p.po_date; return d>=m.start&&d<=m.end; });
       // Input GST on purchase — use delivered_qty (goods actually received)
-      const inputGSTPurch=mPos.reduce((s,p)=>{ const r=(Number(p.gst_rate??settings.gst_rate_sales??12))/100; return s+Number(p.delivered_qty||0)*Number(p.purchase_price)*r; },0);
+      const inputGSTPurch=mPos.reduce((s,p)=>{ const r=(Number(settings.purchase_gst_rate??5))/100; const dr=deliveries.filter(d=>d.po_id===p.id); const dq=dr.length>0?dr.reduce((a,d)=>a+Number(d.qty_delivered||0),0):Number(p.delivered_qty||0); return s+dq*Number(p.purchase_price)*r; },0);
       const inputGSTMfrExp=mfrExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end).reduce((s,e)=>s+Number(e.gst_amount),0);
       const inputGSTBizExp=bizExp.filter(e=>e.expense_date>=m.start&&e.expense_date<=m.end&&e.is_gst_claimable).reduce((s,e)=>s+Number(e.gst_amount),0);
       const totalInput=inputGSTPurch+inputGSTMfrExp+inputGSTBizExp;
@@ -1393,7 +1414,7 @@ export default function DashboardPage() {
     const tOut=monthly.reduce((s,m)=>s+m.outputGST,0);
     const tIn=monthly.reduce((s,m)=>s+m.totalInput,0);
     return {monthly,tOut,tIn,tNet:tOut-tIn,ratePct:(rate*100).toFixed(0)+'%',fy:activeFY2};
-  },[pos,mfrExp,bizExp,targets,selectedFY,settings]);
+  },[pos,mfrExp,bizExp,targets,selectedFY,settings,poInvoices,deliveries]);
 
   // ── Aging ────────────────────────────────────────────────────────────────
   const agingAnalytics = useMemo(()=>{
@@ -1408,7 +1429,7 @@ export default function DashboardPage() {
     const buckets={'0-30':0,'31-60':0,'61-90':0,'90+':0};
     aged.forEach(p=>{ buckets[p.bucket]=(buckets[p.bucket]||0)+p.bal; });
     return {aged,buckets,total:aged.reduce((s,p)=>s+p.bal,0)};
-  },[pos,customers]);
+  },[pos,customers,poFinancials,poInvoices,settings]);
 
   // ── Target vs Actual ─────────────────────────────────────────────────────
   const targetAnalytics = useMemo(()=>{
@@ -1433,7 +1454,9 @@ export default function DashboardPage() {
 
     // Units: ordered (booked) and delivered (shipped)
     const actualUnitsOrdered  = fyPos.reduce((s,p)=>s+Number(p.qty||0),0);
-    const actualUnitsDelivered= fyPos.reduce((s,p)=>s+Number(p.delivered_qty||0),0);
+    // Compute delivered from delivery_entries (source of truth)
+    const getDelQty = (p) => { const dr=deliveries.filter(d=>d.po_id===p.id); return dr.length>0?dr.reduce((s,d)=>s+Number(d.qty_delivered||0),0):Number(p.delivered_qty||0); };
+    const actualUnitsDelivered= fyPos.reduce((s,p)=>s+getDelQty(p),0);
 
     // Revenue: ordered basis (gross bookings) and net of CNs
     const actualGross  = fyPos.reduce((s,p)=>s+Number(p.qty||0)*Number(p.unit_price||0),0);
@@ -1459,7 +1482,7 @@ export default function DashboardPage() {
     const monthly = FY_MONTHS(fy.fy_label).map(m=>({
       label: m.label,
       units: fyPos.filter(p=>{ const d=String(p.po_date||'').slice(0,10); return d>=m.start&&d<=m.end; }).reduce((s,p)=>s+Number(p.qty||0),0),
-      delivered: fyPos.filter(p=>{ const d=String(p.po_date||'').slice(0,10); return d>=m.start&&d<=m.end; }).reduce((s,p)=>s+Number(p.delivered_qty||0),0),
+      delivered: fyPos.filter(p=>{ const d=String(p.po_date||'').slice(0,10); return d>=m.start&&d<=m.end; }).reduce((s,p)=>s+getDelQty(p),0),
       value: fyPos.filter(p=>{ const d=String(p.po_date||'').slice(0,10); return d>=m.start&&d<=m.end; }).reduce((s,p)=>s+Number(p.qty||0)*Number(p.unit_price||0),0),
     }));
 
@@ -1480,7 +1503,7 @@ export default function DashboardPage() {
       unitsToSlab2: Math.max(0,fy.mfr_slab_2_units-actualUnitsOrdered),
       poCount: fyPos.length, // for debug display
     };
-  },[targets,pos,cns,bizExp,selectedFY]);
+  },[targets,pos,cns,bizExp,selectedFY,deliveries]);
 
   // ── Pipeline ──────────────────────────────────────────────────────────────
   const pipeAnalytics = useMemo(()=>{
@@ -1508,7 +1531,8 @@ export default function DashboardPage() {
     const nCN=Number(sim.newPoCNAmount||0),nFOC=Number(sim.newPoFOCUnits||0);
     const hasNew=nq>0&&nup>0;
     const cG=cust.grossSales+(hasNew?nq*nup:0), cCV=cust.cnVal+eC+nCN;
-    const cFC=cust.focCost+eF*settings.default_purchase_price_ddp+nFOC*npp;
+    const custAvgPP = cust.totalQty>0 ? (cust.purchCost-cust.focCost)/cust.totalQty : settings.default_purchase_price_ddp;
+    const cFC=cust.focCost+eF*custAvgPP+nFOC*npp;
     const cPC=cust.purchCost-cust.focCost+(hasNew?nq*npp:0)+cFC;
     const cNS=cG-cCV, cP=cNS-cPC, cTQ=cust.totalQty+(hasNew?nq:0), cFU=cust.focUnits+eF+nFOC;
     const cASP=cTQ>0?cNS/cTQ:0, cAPP=(cTQ+cFU)>0?cPC/(cTQ+cFU):0, cM=cNS>0?(cP/cNS)*100:0;
@@ -1653,19 +1677,19 @@ export default function DashboardPage() {
           {/* Row 2 — Actual P&L (delivered units, biz exp deducted) */}
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#2d8a5e',letterSpacing:'.14em',marginBottom:8}}>ACTUAL P&L — BASED ON DELIVERED UNITS</div>
           <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:14,marginBottom:16}}>
-            <KPICard label="Actual Revenue" val={fmtL(analytics.totalActualRevenue)} sub={`${fmt(analytics.totalDeliveredUnits)} units shipped`} color="#2d7fa8"/>
+            <KPICard label="Actual Revenue (excl. GST)" val={fmtL(analytics.totalActualRevenue)} sub={`${fmt(analytics.totalDeliveredUnits)} units shipped`} color="#2d7fa8"/>
             <KPICard label="Actual Cost (Purchase)" val={fmtL(analytics.totalActualCost)} sub="delivered units × PP" color="#6a5a9a"/>
             <KPICard label="Business Expenses" val={fmtL(analytics.totalBizExp)} sub="Click to see breakdown" color="#c87030" onClick={()=>setDrillDown(d=>d?.type==='expenses'?null:{type:'expenses'})} active={drillDown?.type==='expenses'}/>
             <KPICard label="Actual Net Profit" val={fmtL(analytics.totalActualProfit)} sub={`Margin: ${pct(analytics.totalActualNetRev>0?analytics.totalActualProfit/analytics.totalActualNetRev*100:0)}`} color={analytics.totalActualProfit>=0?'#2d8a5e':'#b85a5a'}/>
-            <KPICard label="Pending Collections" val={fmtL(analytics.pendingAdvance)} sub="Click to see by customer" color={analytics.pendingAdvance>0?'#b85a5a':'#2d8a5e'} onClick={()=>setDrillDown(d=>d?.type==='pending'?null:{type:'pending'})} active={drillDown?.type==='pending'}/>
+            <KPICard label="Pending Collections (incl. GST)" val={fmtL(analytics.pendingAdvance)} sub="Click to see by customer" color={analytics.pendingAdvance>0?'#b85a5a':'#2d8a5e'} onClick={()=>setDrillDown(d=>d?.type==='pending'?null:{type:'pending'})} active={drillDown?.type==='pending'}/>
           </div>
           {/* Row 3 — Expected P&L (all POs complete, no biz exp) */}
           <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:'#b8924a',letterSpacing:'.14em',marginBottom:8}}>EXPECTED P&L — IF ALL PENDING ORDERS DELIVERED (excl. Biz Exp)</div>
           <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:16}}>
-            <KPICard label="Expected Revenue" val={fmtL(analytics.totalNetSales)} sub={`${fmt(analytics.totalOrderedUnits)} units total`} color="#2d7fa8"/>
+            <KPICard label="Expected Revenue (excl. GST)" val={fmtL(analytics.totalNetSales)} sub={`${fmt(analytics.totalOrderedUnits)} units total`} color="#2d7fa8"/>
             <KPICard label="Expected Cost" val={fmtL(analytics.totalOrderedCost)} sub={`FOC cost: ${fmtL(analytics.totalFOCCost)}`} color="#6a5a9a"/>
             <KPICard label="Expected Gross Profit" val={fmtL(analytics.totalExpectedProfit)} sub={`Margin: ${pct(analytics.totalNetSales>0?analytics.totalExpectedProfit/analytics.totalNetSales*100:0)}`} color={analytics.totalExpectedProfit>=0?'#2d8a5e':'#b85a5a'}/>
-            <KPICard label="Advances Received" val={fmtL(analytics.totalAdvances)} sub="from customers" color="#2d8a5e"/>
+            <KPICard label="Advances Received (incl. GST)" val={fmtL(analytics.totalAdvances)} sub="from customers" color="#2d8a5e"/>
           </div>
           {/* Drill-down panel */}
           {drillDown&&(
@@ -2140,7 +2164,7 @@ export default function DashboardPage() {
           <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:18}}>
             <KPICard label="Open Orders" val={fmt(analytics.unfulfilled.length)} color="#b8924a"/>
             <KPICard label="Total Order Value (incl. GST)" val={fmtL(analytics.unfulfilled.reduce((s,p)=>s+poFinancials(p).orderedTotal,0))} color="#2d7fa8"/>
-            <KPICard label="Advances Received" val={fmtL(analytics.unfulfilled.reduce((s,p)=>s+Number(p.advance),0))} color="#2d8a5e"/>
+            <KPICard label="Advances Received (incl. GST)" val={fmtL(analytics.unfulfilled.reduce((s,p)=>s+Number(p.advance),0))} color="#2d8a5e"/>
             <KPICard label="Balance Pending (incl. GST)" val={fmtL(analytics.unfulfilled.reduce((s,p)=>{ const fin=poFinancials(p); const due=fin.invRows.length>0?fin.balanceDue:Math.max(0,fin.orderedTotal-fin.advance); return s+due; },0))} color="#b85a5a"/>
           </div>
           <div style={{...card,overflow:'auto'}}>
@@ -2193,7 +2217,7 @@ export default function DashboardPage() {
               <div><label style={lbl}>Customer *</label><SearchableCustSelect customers={customers} value={poForm.customer_id} onChange={v=>setPoForm({...poForm,customer_id:v})} inputStyle={inp}/></div>
               <div><label style={lbl}>Delivery *</label><select style={inp} value={poForm.delivery_type} onChange={e=>{ const def=e.target.value==='DDP'?settings.default_purchase_price_ddp:settings.default_purchase_price_exw; setPoForm({...poForm,delivery_type:e.target.value,purchase_price:def}); }}><option value="DDP">DDP</option><option value="EXW">EXW</option></select></div>
               <div><label style={lbl}>Qty *</label><input style={inp} type="number" value={poForm.qty} onChange={e=>setPoForm({...poForm,qty:e.target.value})}/></div>
-              <div><label style={lbl}>Unit Price (₹) *</label><input style={inp} type="number" value={poForm.unit_price} onChange={e=>{ const up=Number(e.target.value); const da=poForm.discount_pct>0?parseFloat((up*poForm.qty*poForm.discount_pct/100).toFixed(2)):poForm.discount_amount; setPoForm({...poForm,unit_price:e.target.value,discount_amount:da}); }}/></div>
+              <div><label style={lbl}>Unit Price (₹, excl. GST) *</label><input style={inp} type="number" placeholder="GST-exclusive" value={poForm.unit_price} onChange={e=>{ const up=Number(e.target.value); const da=poForm.discount_pct>0?parseFloat((up*poForm.qty*poForm.discount_pct/100).toFixed(2)):poForm.discount_amount; setPoForm({...poForm,unit_price:e.target.value,discount_amount:da}); }}/></div>
               <div><label style={lbl}>Discount %</label><input style={inp} type="number" min="0" max="100" placeholder="0" value={poForm.discount_pct} onChange={e=>{ const dp=Number(e.target.value); const da=parseFloat((Number(poForm.unit_price)*Number(poForm.qty)*dp/100).toFixed(2)); setPoForm({...poForm,discount_pct:e.target.value,discount_amount:da}); }}/></div>
               <div><label style={lbl}>Discount Amt (₹)</label><input style={inp} type="number" placeholder="0" value={poForm.discount_amount} onChange={e=>{ const da=Number(e.target.value); const base=Number(poForm.unit_price)*Number(poForm.qty); const dp=base>0?parseFloat((da/base*100).toFixed(2)):0; setPoForm({...poForm,discount_amount:e.target.value,discount_pct:dp}); }}/></div>
               <div><label style={lbl}>GST Rate % *</label><select style={inp} value={poForm.gst_rate} onChange={e=>setPoForm({...poForm,gst_rate:e.target.value})}>{GST_RATES.map(r=><option key={r} value={r}>{r}%{r===0?' (Exempt)':''}</option>)}</select></div>
@@ -2228,7 +2252,7 @@ export default function DashboardPage() {
               </div>
             </div>
             <div style={{...g4}}>
-              <div><label style={lbl}>Advance (₹) *</label><input style={inp} type="number" value={poForm.advance} onChange={e=>setPoForm({...poForm,advance:e.target.value})}/></div>
+              <div><label style={lbl}>Advance (₹, incl. GST) *</label><input style={inp} type="number" placeholder="GST-inclusive amount" value={poForm.advance} onChange={e=>setPoForm({...poForm,advance:e.target.value})}/></div>
               <div><label style={lbl}>PO Date *</label><input style={inp} type="date" value={poForm.po_date} onChange={e=>setPoForm({...poForm,po_date:e.target.value})}/></div>
               <div><label style={lbl}>Status</label><select style={inp} value={poForm.status} onChange={e=>setPoForm({...poForm,status:e.target.value})}>{PO_STAGES.map(s=><option key={s}>{s}</option>)}</select></div>
               <div style={{display:'flex',alignItems:'flex-end'}}><button onClick={addPO} disabled={saving} style={{...btn(saving),width:'100%',padding:'11px 0'}}>{saving?'Saving…':'ADD PO →'}</button></div>
@@ -2265,7 +2289,7 @@ export default function DashboardPage() {
                     {fin.invRows.length>0&&<div style={{fontSize:9,color:'#a09689',marginTop:1}}>{fin.invRows.length} invoice{fin.invRows.length>1?'s':''}</div>}
                   </td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#5a9e6f'}}>
-                    <input style={{...inp,width:110,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace",color:'#5a9e6f'}} type="number" defaultValue={p.advance} onBlur={e=>{ if(Number(e.target.value)!==Number(p.advance)) updatePOField(p.id,'advance',e.target.value); }}/>
+                    <input style={{...inp,width:110,fontSize:11,padding:'3px 8px',fontFamily:"'DM Mono',monospace",color:'#5a9e6f'}} type="number" title="Enter GST-inclusive amount" placeholder="incl. GST" defaultValue={p.advance} onBlur={e=>{ if(Number(e.target.value)!==Number(p.advance)) updatePOField(p.id,'advance',e.target.value); }}/>
                   </td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:fin.balanceDue>0?'#b85a5a':'#5a9e6f',fontWeight:700}}>{fmtX(fin.balanceDue)}</td>
                   <td style={{fontFamily:"'DM Mono',monospace",color:'#8a7e72',fontSize:10}}>{p.po_date}</td>
@@ -2339,7 +2363,7 @@ export default function DashboardPage() {
                 <div><label style={lbl}>Qty *</label>
                   <input style={inp} type="number" value={editForm.qty} onChange={e=>setEditForm({...editForm,qty:e.target.value})}/>
                 </div>
-                <div><label style={lbl}>Unit Selling Price (₹) *</label>
+                <div><label style={lbl}>Unit Selling Price (₹, excl. GST) *</label>
                   <input style={inp} type="number" value={editForm.unit_price} onChange={e=>setEditForm({...editForm,unit_price:e.target.value})}/>
                 </div>
               </div>
@@ -2365,8 +2389,8 @@ export default function DashboardPage() {
               </div>
 
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
-                <div><label style={lbl}>Advance Received (₹) *</label>
-                  <input style={inp} type="number" value={editForm.advance} onChange={e=>setEditForm({...editForm,advance:e.target.value})}/>
+                <div><label style={lbl}>Advance Received (₹, incl. GST) *</label>
+                  <input style={inp} type="number" placeholder="GST-inclusive amount" value={editForm.advance} onChange={e=>setEditForm({...editForm,advance:e.target.value})}/>
                 </div>
                 <div><label style={lbl}>PO Date *</label>
                   <input style={inp} type="date" value={editForm.po_date} onChange={e=>setEditForm({...editForm,po_date:e.target.value})}/>
@@ -2948,9 +2972,9 @@ export default function DashboardPage() {
               <div><label style={lbl}>PI Date *</label><input style={inp} type="date" value={piForm.pi_date} onChange={e=>setPiForm({...piForm,pi_date:e.target.value})}/></div>
               <div><label style={lbl}>Taxable Amount (₹)</label><input style={inp} type="number" value={piForm.amount} onChange={e=>{ const a=Number(e.target.value); const g=a*(settings.gst_rate_sales||12)/100; setPiForm({...piForm,amount:e.target.value,gst_amount:g.toFixed(2),total_amount:(a+g).toFixed(2),advance_due:(a+g).toFixed(2)}); }}/></div>
               <div><label style={lbl}>GST ({settings.gst_rate_sales||12}%)</label><input style={inp} type="number" value={piForm.gst_amount} onChange={e=>setPiForm({...piForm,gst_amount:e.target.value,total_amount:(Number(piForm.amount)+Number(e.target.value)).toFixed(2)})}/></div>
-              <div><label style={lbl}>Total Amount (₹) *</label><input style={{...inp,borderColor:'#b8924a'}} type="number" value={piForm.total_amount} onChange={e=>setPiForm({...piForm,total_amount:e.target.value,advance_due:e.target.value})}/></div>
-              <div><label style={lbl}>Advance Due (₹)</label><input style={inp} type="number" value={piForm.advance_due} onChange={e=>setPiForm({...piForm,advance_due:e.target.value})}/></div>
-              <div><label style={lbl}>Advance Received (₹)</label><input style={inp} type="number" value={piForm.advance_received} onChange={e=>setPiForm({...piForm,advance_received:e.target.value})}/></div>
+              <div><label style={lbl}>Total Amount (₹, incl. GST) *</label><input style={{...inp,borderColor:'#b8924a'}} type="number" value={piForm.total_amount} onChange={e=>setPiForm({...piForm,total_amount:e.target.value,advance_due:e.target.value})}/></div>
+              <div><label style={lbl}>Advance Due (₹, incl. GST)</label><input style={inp} type="number" value={piForm.advance_due} onChange={e=>setPiForm({...piForm,advance_due:e.target.value})}/></div>
+              <div><label style={lbl}>Advance Received (₹, incl. GST)</label><input style={inp} type="number" value={piForm.advance_received} onChange={e=>setPiForm({...piForm,advance_received:e.target.value})}/></div>
               <div><label style={lbl}>Advance Date</label><input style={inp} type="date" value={piForm.advance_date} onChange={e=>setPiForm({...piForm,advance_date:e.target.value})}/></div>
               <div><label style={lbl}>Payment Terms</label><input style={inp} type="text" value={piForm.payment_terms} onChange={e=>setPiForm({...piForm,payment_terms:e.target.value})}/></div>
               <div style={{display:'flex',alignItems:'flex-end'}}><button onClick={addPI} disabled={saving} style={{...btn(saving),width:'100%',padding:'10px'}}>{saving?'Saving…':'ADD PI →'}</button></div>
@@ -3060,13 +3084,13 @@ export default function DashboardPage() {
                 </select>
               </div>
               <div>
-                <label style={lbl}>Log Payment Receipt</label>
+                <label style={lbl}>Log Payment Receipt (GST-inclusive)</label>
                 <div style={{display:'flex',gap:8}}>
-                  <input style={{...inp,flex:1}} type="number" placeholder="Amount (₹)" value={receiptForm.amount} onChange={e=>setReceiptForm({...receiptForm,amount:e.target.value,customer_id:ledgerCust||''})}/>
+                  <input style={{...inp,flex:1}} type="number" placeholder="Amount incl. GST (₹)" value={receiptForm.amount} onChange={e=>setReceiptForm({...receiptForm,amount:e.target.value,customer_id:ledgerCust||''})}/>
                   <input style={{...inp,flex:1}} type="date" value={receiptForm.receipt_date} onChange={e=>setReceiptForm({...receiptForm,receipt_date:e.target.value})}/>
                 </div>
               </div>
-              <button onClick={async ()=>{ if(!ledgerCust){showToast('Select a customer first','error');return;} await new Promise(r=>{ setReceiptForm(f=>{const nf={...f,customer_id:ledgerCust};setTimeout(()=>r(nf),0);return nf;}); }); addReceipt(); }} disabled={saving} style={{...btn(saving,'#5a9e6f','#f5f0e8'),padding:'10px 16px'}}>{saving?'…':'LOG RECEIPT →'}</button>
+              <button onClick={async ()=>{ if(!ledgerCust){showToast('Select a customer first','error');return;} if(!receiptForm.receipt_date||!receiptForm.amount){showToast('Fill amount and date','error');return;} setSaving(true); const {error}=await supabase.from('payment_receipts').insert([{receipt_no:null,customer_id:Number(ledgerCust),po_id:null,receipt_date:receiptForm.receipt_date,amount:Number(receiptForm.amount),payment_mode:'Bank Transfer',reference:null,notes:null}]); if(error)showToast('Error: '+error.message,'error'); else{showToast('Receipt logged ✓');setReceiptForm({receipt_no:'',customer_id:'',po_id:'',receipt_date:'',amount:'',payment_mode:'Bank Transfer',reference:'',notes:''});await fetchAll();} setSaving(false); }} disabled={saving} style={{...btn(saving,'#5a9e6f','#f5f0e8'),padding:'10px 16px'}}>{saving?'…':'LOG RECEIPT →'}</button>
             </div>
           </div>
 
@@ -3098,7 +3122,7 @@ export default function DashboardPage() {
             });
             custCNs.forEach(c=>{
               if(c.type==='CNNote') entries.push({date:c.cn_date,type:'Credit Note',ref:`CN-${c.id}`,description:c.note||'Credit Note',debit:0,credit:Number(c.amount),cn:c});
-              if(c.type==='FOC') { const po=pos.find(p=>p.id===c.po_id); entries.push({date:c.cn_date,type:'FOC',ref:`FOC-${c.id}`,description:`${c.foc_units} FOC units`,debit:0,credit:c.foc_units*Number(po?.purchase_price||0),cn:c}); }
+              if(c.type==='FOC') { const po=pos.find(p=>p.id===c.po_id); entries.push({date:c.cn_date,type:'FOC',ref:`FOC-${c.id}`,description:`${c.foc_units} FOC units @ ${fmtX(po?.unit_price||0)}`,debit:0,credit:c.foc_units*Number(po?.unit_price||0),cn:c}); }
             });
             custReceipts.forEach(r=>{
               entries.push({date:r.receipt_date,type:'Payment',ref:r.receipt_no||`RCP-${r.id}`,description:r.notes||`${r.payment_mode}${r.reference?` — ${r.reference}`:''}`,debit:0,credit:Number(r.amount),receipt:r});
@@ -3142,16 +3166,16 @@ export default function DashboardPage() {
 
               {/* Full ledger receipt form */}
               <div style={{...card,padding:16,marginBottom:16}}>
-                <div style={{fontSize:10,color:'#a09689',fontFamily:"'DM Mono',monospace",marginBottom:10}}>LOG DETAILED PAYMENT RECEIPT</div>
+                <div style={{fontSize:10,color:'#a09689',fontFamily:"'DM Mono',monospace",marginBottom:10}}>LOG DETAILED PAYMENT RECEIPT <span style={{color:'#b8924a'}}>(enter total amount received incl. GST)</span></div>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:10}}>
                   <div><label style={lbl}>Receipt No.</label><input style={inp} type="text" value={receiptForm.receipt_no} onChange={e=>setReceiptForm({...receiptForm,receipt_no:e.target.value})}/></div>
                   <div><label style={lbl}>Date *</label><input style={inp} type="date" value={receiptForm.receipt_date} onChange={e=>setReceiptForm({...receiptForm,receipt_date:e.target.value,customer_id:ledgerCust})}/></div>
-                  <div><label style={lbl}>Amount (₹) *</label><input style={inp} type="number" value={receiptForm.amount} onChange={e=>setReceiptForm({...receiptForm,amount:e.target.value})}/></div>
+                  <div><label style={lbl}>Amount (₹, incl. GST) *</label><input style={inp} type="number" placeholder="GST-inclusive" value={receiptForm.amount} onChange={e=>setReceiptForm({...receiptForm,amount:e.target.value})}/></div>
                   <div><label style={lbl}>Linked PO</label><select style={inp} value={receiptForm.po_id} onChange={e=>setReceiptForm({...receiptForm,po_id:e.target.value})}><option value="">None</option>{custPOs.map(p=><option key={p.id} value={p.id}>{p.id}</option>)}</select></div>
                   <div><label style={lbl}>Payment Mode</label><select style={inp} value={receiptForm.payment_mode} onChange={e=>setReceiptForm({...receiptForm,payment_mode:e.target.value})}>{PAY_MODES.map(m=><option key={m}>{m}</option>)}</select></div>
                   <div style={{gridColumn:'span 2'}}><label style={lbl}>Reference / UTR</label><input style={inp} type="text" value={receiptForm.reference} onChange={e=>setReceiptForm({...receiptForm,reference:e.target.value})}/></div>
                   <div style={{gridColumn:'span 2'}}><label style={lbl}>Notes</label><input style={inp} type="text" value={receiptForm.notes} onChange={e=>setReceiptForm({...receiptForm,notes:e.target.value})}/></div>
-                  <div style={{display:'flex',alignItems:'flex-end'}}><button onClick={()=>{ setReceiptForm(f=>({...f,customer_id:ledgerCust})); addReceipt(); }} disabled={saving} style={{...btn(saving,'#5a9e6f','#f5f0e8'),width:'100%',padding:'10px'}}>{saving?'Saving…':'LOG →'}</button></div>
+                  <div style={{display:'flex',alignItems:'flex-end'}}><button onClick={async()=>{ const form={...receiptForm,customer_id:ledgerCust}; if(!form.receipt_date||!form.amount){showToast('Fill date and amount','error');return;} setSaving(true); const {error}=await supabase.from('payment_receipts').insert([{receipt_no:form.receipt_no||null,customer_id:Number(form.customer_id),po_id:form.po_id||null,receipt_date:form.receipt_date,amount:Number(form.amount),payment_mode:form.payment_mode,reference:form.reference||null,notes:form.notes||null}]); if(error)showToast('Error: '+error.message,'error'); else{showToast('Receipt logged ✓');setReceiptForm({receipt_no:'',customer_id:'',po_id:'',receipt_date:'',amount:'',payment_mode:'Bank Transfer',reference:'',notes:''});await fetchAll();} setSaving(false); }} disabled={saving} style={{...btn(saving,'#5a9e6f','#f5f0e8'),width:'100%',padding:'10px'}}>{saving?'Saving…':'LOG →'}</button></div>
                 </div>
               </div>
 
@@ -3274,7 +3298,7 @@ export default function DashboardPage() {
               <div><label style={lbl}>Invoice No *</label><input style={inp} value={editInvoiceForm.invoice_no} onChange={e=>setEditInvoiceForm({...editInvoiceForm,invoice_no:e.target.value})}/></div>
               <div><label style={lbl}>Invoice Date *</label><input style={inp} type="date" value={editInvoiceForm.invoice_date} onChange={e=>setEditInvoiceForm({...editInvoiceForm,invoice_date:e.target.value})}/></div>
               <div><label style={lbl}>Qty *</label><input style={inp} type="number" min="1" value={editInvoiceForm.qty} onChange={e=>setEditInvoiceForm({...editInvoiceForm,qty:e.target.value})}/></div>
-              <div><label style={lbl}>Unit Price (₹) *</label><input style={inp} type="number" value={editInvoiceForm.unit_price} onChange={e=>setEditInvoiceForm({...editInvoiceForm,unit_price:e.target.value})}/></div>
+              <div><label style={lbl}>Unit Price (₹, excl. GST) *</label><input style={inp} type="number" value={editInvoiceForm.unit_price} onChange={e=>setEditInvoiceForm({...editInvoiceForm,unit_price:e.target.value})}/></div>
               <div><label style={lbl}>Discount (₹)</label><input style={inp} type="number" min="0" value={editInvoiceForm.discount_amount} onChange={e=>setEditInvoiceForm({...editInvoiceForm,discount_amount:e.target.value})}/></div>
               <div><label style={lbl}>GST Rate %</label>
                 <select style={inp} value={editInvoiceForm.gst_rate} onChange={e=>setEditInvoiceForm({...editInvoiceForm,gst_rate:e.target.value})}>
@@ -3313,9 +3337,9 @@ export default function DashboardPage() {
               <div><label style={lbl}>PI Date</label><input style={inp} type="date" value={editPIForm.pi_date} onChange={e=>setEditPIForm({...editPIForm,pi_date:e.target.value})}/></div>
               <div><label style={lbl}>Taxable (₹)</label><input style={inp} type="number" value={editPIForm.amount} onChange={e=>{ const a=Number(e.target.value); const g=a*(settings.gst_rate_sales||12)/100; setEditPIForm({...editPIForm,amount:e.target.value,gst_amount:g.toFixed(2),total_amount:(a+g).toFixed(2)}); }}/></div>
               <div><label style={lbl}>GST (₹)</label><input style={inp} type="number" value={editPIForm.gst_amount} onChange={e=>setEditPIForm({...editPIForm,gst_amount:e.target.value})}/></div>
-              <div><label style={lbl}>Total (₹)</label><input style={{...inp,borderColor:'#b8924a'}} type="number" value={editPIForm.total_amount} onChange={e=>setEditPIForm({...editPIForm,total_amount:e.target.value,advance_due:e.target.value})}/></div>
-              <div><label style={lbl}>Advance Due (₹)</label><input style={inp} type="number" value={editPIForm.advance_due} onChange={e=>setEditPIForm({...editPIForm,advance_due:e.target.value})}/></div>
-              <div><label style={lbl}>Advance Received (₹)</label><input style={inp} type="number" value={editPIForm.advance_received} onChange={e=>setEditPIForm({...editPIForm,advance_received:e.target.value})}/></div>
+              <div><label style={lbl}>Total (₹, incl. GST)</label><input style={{...inp,borderColor:'#b8924a'}} type="number" value={editPIForm.total_amount} onChange={e=>setEditPIForm({...editPIForm,total_amount:e.target.value,advance_due:e.target.value})}/></div>
+              <div><label style={lbl}>Advance Due (₹, incl. GST)</label><input style={inp} type="number" value={editPIForm.advance_due} onChange={e=>setEditPIForm({...editPIForm,advance_due:e.target.value})}/></div>
+              <div><label style={lbl}>Advance Received (₹, incl. GST)</label><input style={inp} type="number" value={editPIForm.advance_received} onChange={e=>setEditPIForm({...editPIForm,advance_received:e.target.value})}/></div>
               <div><label style={lbl}>Advance Date</label><input style={inp} type="date" value={editPIForm.advance_date} onChange={e=>setEditPIForm({...editPIForm,advance_date:e.target.value})}/></div>
               <div style={{gridColumn:'span 2'}}><label style={lbl}>Payment Terms</label><input style={inp} value={editPIForm.payment_terms} onChange={e=>setEditPIForm({...editPIForm,payment_terms:e.target.value})}/></div>
               <div><label style={lbl}>Status</label><select style={inp} value={editPIForm.status} onChange={e=>setEditPIForm({...editPIForm,status:e.target.value})}>{['Pending','Partially Paid','Paid','Cancelled'].map(s=><option key={s}>{s}</option>)}</select></div>
