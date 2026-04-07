@@ -32,6 +32,18 @@ const PAY_MODES   = ['Bank Transfer','Cash','Cheque','UPI','Credit Card'];
 // Salary has no GST, insurance has no GST — helper
 const catHasGST   = cat => !['Salary','Insurance'].includes(cat);
 
+// Derive FY date bounds from an FY label like "FY 2026-27"
+// Works without needing an annual_targets row to exist
+const fyBounds = fyLabel => {
+  const yr = parseInt(String(fyLabel||'').replace('FY ','').split('-')[0]);
+  if (!yr || isNaN(yr)) {
+    const now = new Date();
+    const y = now.getMonth()>=3 ? now.getFullYear() : now.getFullYear()-1;
+    return { fy_label:`FY ${y}-${String(y+1).slice(2)}`, fy_start:`${y}-04-01`, fy_end:`${y+1}-03-31` };
+  }
+  return { fy_label:`FY ${yr}-${String(yr+1).slice(2)}`, fy_start:`${yr}-04-01`, fy_end:`${yr+1}-03-31` };
+};
+
 const FY_MONTHS = fy => {
   const yr = parseInt(fy.replace('FY ','').split('-')[0]);
   return [
@@ -661,8 +673,9 @@ export default function DashboardPage() {
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
   const nextPONumber = useCallback(() => {
-    const fy = targets.find(t=>t.fy_label===selectedFY) || targets[0];
-    const fyShort = fy ? fy.fy_label.replace('FY ','').replace('-','-').split('-').map((y,i)=>i===0?y.slice(2):y.slice(2)).join('-') : '25-26';
+    // Derive FY short string from selectedFY directly (works without target row)
+    const yr = parseInt(String(selectedFY||'').replace('FY ','').split('-')[0]);
+    const fyShort = yr ? `${String(yr).slice(2)}-${String(yr+1).slice(2)}` : '26-27';
     const existing = pos.filter(p=>p.id&&p.id.startsWith(COMPANY.poPrefix)).map(p=>{
       const parts = p.id.split('/');
       return parseInt(parts[2])||0;
@@ -670,7 +683,7 @@ export default function DashboardPage() {
     const maxNum = existing.length>0 ? Math.max(...existing) : 0;
     const next = String(maxNum+1).padStart(4,'0');
     return `${COMPANY.poPrefix}${next}/${fyShort}`;
-  },[pos,targets,selectedFY]);
+  },[pos,selectedFY]);
 
 
   const addCustomer = async () => {
@@ -895,10 +908,10 @@ export default function DashboardPage() {
   const nextPINumber = useCallback(() => {
     const existing = pis.map(p=>{ const m=p.pi_number?.match(/\/(\d+)\//); return m?parseInt(m[1]):0; });
     const maxNum = existing.length>0?Math.max(...existing):0;
-    const fy = targets.find(t=>t.fy_label===selectedFY)||targets[0];
-    const fyShort = fy?fy.fy_label.replace('FY ','').split('-').map(y=>y.slice(2)).join('-'):'25-26';
+    const yr = parseInt(String(selectedFY||'').replace('FY ','').split('-')[0]);
+    const fyShort = yr ? `${String(yr).slice(2)}-${String(yr+1).slice(2)}` : '26-27';
     return `${COMPANY.short}/PI/${String(maxNum+1).padStart(4,'0')}/${fyShort}`;
-  },[pis,targets,selectedFY]);
+  },[pis,selectedFY]);
 
   const addPI = async () => {
     if (!piForm.pi_number||!piForm.customer_id||!piForm.pi_date||!piForm.total_amount) { showToast('Fill PI number, customer, date, total amount'); return; }
@@ -1213,12 +1226,11 @@ export default function DashboardPage() {
 
 
   const analytics = useMemo(()=>{
-    // ── FY filter — use selectedFY if a target is configured, else all-time ──
-    const fyT=targets.find(t=>t.fy_label===selectedFY)||targets[0];
-    const today4=new Date();
-    const fyYear4=today4.getMonth()>=3?today4.getFullYear():today4.getFullYear()-1;
-    const fyStart=fyT?String(fyT.fy_start).slice(0,10):`${fyYear4}-04-01`;
-    const fyEnd=fyT?String(fyT.fy_end).slice(0,10):`${fyYear4+1}-03-31`;
+    // ── FY filter — derive bounds from selectedFY (works even without a target row) ──
+    const fyT = targets.find(t=>t.fy_label===selectedFY);
+    const bounds = fyT ? {fy_start:String(fyT.fy_start).slice(0,10), fy_end:String(fyT.fy_end).slice(0,10)} : fyBounds(selectedFY);
+    const fyStart = bounds.fy_start;
+    const fyEnd   = bounds.fy_end;
     const fyPos=pos.filter(p=>{ const d=String(p.po_date||'').slice(0,10); return d>=fyStart&&d<=fyEnd; });
     const fyCns=cns.filter(c=>{ const po=pos.find(p=>p.id===c.po_id); if(!po) return false; const d=String(po.po_date||'').slice(0,10); return d>=fyStart&&d<=fyEnd; });
     const fyBizExp=bizExp.filter(e=>{ const d=String(e.expense_date||'').slice(0,10); return d>=fyStart&&d<=fyEnd; });
@@ -1326,12 +1338,11 @@ export default function DashboardPage() {
 
   // ── Biz expense analytics ─────────────────────────────────────────────────
   const bizExpAnalytics = useMemo(()=>{
-    // FY-filter expenses to match dashboard scope
-    const fyT=targets.find(t=>t.fy_label===selectedFY)||targets[0];
-    const today5=new Date();
-    const fyYear5=today5.getMonth()>=3?today5.getFullYear():today5.getFullYear()-1;
-    const fyStart5=fyT?String(fyT.fy_start).slice(0,10):`${fyYear5}-04-01`;
-    const fyEnd5=fyT?String(fyT.fy_end).slice(0,10):`${fyYear5+1}-03-31`;
+    // FY-filter expenses using selectedFY (works without target row)
+    const fyT=targets.find(t=>t.fy_label===selectedFY);
+    const b = fyT ? {fy_start:String(fyT.fy_start).slice(0,10), fy_end:String(fyT.fy_end).slice(0,10)} : fyBounds(selectedFY);
+    const fyStart5 = b.fy_start;
+    const fyEnd5   = b.fy_end;
     const fyBizExpFiltered=bizExp.filter(e=>{ const d=String(e.expense_date||'').slice(0,10); return d>=fyStart5&&d<=fyEnd5; });
     const total     = fyBizExpFiltered.reduce((s,e)=>s+Number(e.total_amount),0);
     const totalBase = fyBizExpFiltered.reduce((s,e)=>s+Number(e.amount),0);
@@ -1343,12 +1354,9 @@ export default function DashboardPage() {
 
   // ── Cash Flow ─────────────────────────────────────────────────────────────
   const cashAnalytics = useMemo(()=>{
-    const fy=targets.find(t=>t.fy_label===selectedFY)||targets[0];
-    // If no target configured, derive FY bounds from today's date (Indian FY: Apr-Mar)
-    const today2=new Date();
-    const fyYear = today2.getMonth()>=3 ? today2.getFullYear() : today2.getFullYear()-1;
-    const fallbackFY = { fy_label:`FY ${fyYear}-${String(fyYear+1).slice(2)}`, fy_start:`${fyYear}-04-01`, fy_end:`${fyYear+1}-03-31` };
-    const activeFY = fy || fallbackFY;
+    const fy=targets.find(t=>t.fy_label===selectedFY);
+    // If no target configured, derive FY bounds from selectedFY
+    const activeFY = fy || fyBounds(selectedFY);
     const fyMonths=FY_MONTHS(activeFY.fy_label);
     const today=new Date();
     const mkDate=d=>d30=>{ const x=new Date(today); x.setDate(x.getDate()+d30); return x; };
@@ -1389,11 +1397,8 @@ export default function DashboardPage() {
 
   // ── GST analytics (rate from Settings) ───────────────────────────────────
   const gstAnalytics = useMemo(()=>{
-    const fy=targets.find(t=>t.fy_label===selectedFY)||targets[0];
-    const today3=new Date();
-    const fyYear2 = today3.getMonth()>=3 ? today3.getFullYear() : today3.getFullYear()-1;
-    const fallbackFY2 = { fy_label:`FY ${fyYear2}-${String(fyYear2+1).slice(2)}` };
-    const activeFY2 = fy || fallbackFY2;
+    const fy=targets.find(t=>t.fy_label===selectedFY);
+    const activeFY2 = fy || fyBounds(selectedFY);
     const rate=(settings.gst_rate_sales||12)/100;
     const fyMonths=FY_MONTHS(activeFY2.fy_label);
 
@@ -1433,8 +1438,8 @@ export default function DashboardPage() {
 
   // ── Target vs Actual ─────────────────────────────────────────────────────
   const targetAnalytics = useMemo(()=>{
-    const fy=targets.find(t=>t.fy_label===selectedFY)||targets[0];
-    if (!fy) return null;
+    const fy=targets.find(t=>t.fy_label===selectedFY);
+    if (!fy) return null; // no target set for the selected FY — UI shows prompt to add one
 
     // FY date bounds — ensure consistent string comparison (YYYY-MM-DD)
     const fyStart=String(fy.fy_start).slice(0,10);
@@ -1569,12 +1574,42 @@ export default function DashboardPage() {
     {key:'settings',   label:'⚙️ Settings'},
   ];
 
-  const FYSelector = () => (
-    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:18,flexWrap:'wrap'}}>
-      <div style={{fontSize:10,color:'#8a7e72',fontFamily:"'DM Mono',monospace"}}>FY:</div>
-      {targets.map(t=><button key={t.fy_label} onClick={()=>setFY(t.fy_label)} style={{background:selectedFY===t.fy_label?'#fdf6ec':'transparent',border:`1px solid ${selectedFY===t.fy_label?'#b8924a':'#e0d8cc'}`,color:selectedFY===t.fy_label?'#b8924a':'#8a7e72',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:11}}>{t.fy_label}</button>)}
-    </div>
-  );
+  const FYSelector = () => {
+    // Build the list of FYs to show: union of (target FYs) + (current FY) + (FYs derived from PO dates)
+    const fySet = new Set(targets.map(t=>t.fy_label));
+    // Always include the actual current FY based on today's date
+    fySet.add(currentFY);
+    // Include any FY derived from existing PO dates
+    pos.forEach(p=>{
+      const d = String(p.po_date||'').slice(0,10);
+      if (!d) return;
+      const yr = parseInt(d.slice(0,4));
+      const mon = parseInt(d.slice(5,7));
+      const fyYr = mon>=4 ? yr : yr-1;
+      fySet.add(`FY ${fyYr}-${String(fyYr+1).slice(2)}`);
+    });
+    // Sort descending by start year
+    const fyList = Array.from(fySet).sort((a,b)=>{
+      const ya = parseInt(String(a).replace('FY ','').split('-')[0])||0;
+      const yb = parseInt(String(b).replace('FY ','').split('-')[0])||0;
+      return yb-ya;
+    });
+    return (
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:18,flexWrap:'wrap'}}>
+        <div style={{fontSize:10,color:'#8a7e72',fontFamily:"'DM Mono',monospace"}}>FY:</div>
+        {fyList.map(label=>{
+          const hasTarget = targets.some(t=>t.fy_label===label);
+          return (
+            <button key={label} onClick={()=>setFY(label)}
+              title={hasTarget?'':'No target configured for this FY — go to Target tab to set one'}
+              style={{background:selectedFY===label?'#fdf6ec':'transparent',border:`1px solid ${selectedFY===label?'#b8924a':'#e0d8cc'}`,color:selectedFY===label?'#b8924a':'#8a7e72',borderRadius:6,padding:'3px 10px',cursor:'pointer',fontFamily:"'DM Mono',monospace",fontSize:11,opacity:hasTarget?1:0.85}}>
+              {label}{!hasTarget&&<span style={{marginLeft:4,color:'#c87030',fontSize:9}}>•</span>}
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
 
   const KPICard = ({label,val,sub,color,onClick,active}) => (
     <div className="kc" onClick={onClick} style={{cursor:onClick?'pointer':'default',borderColor:active?color:'',outline:active?`2px solid ${color}40`:'none'}}>
